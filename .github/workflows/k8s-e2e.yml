@@ -57,19 +57,50 @@ jobs:
         run: python scripts/k8s_local.py up
 
       - name: End-to-end feature check
-        run: python scripts/k8s_local.py check --report harnis-check-kind.json
+        shell: bash
+        run: |
+          set -o pipefail
+          python scripts/k8s_local.py check --report harnis-check-kind.json 2>&1 | tee harnis-check-kind.log
+
+      - name: Show failures as annotations
+        if: failure()
+        shell: bash
+        run: |
+          # Annotations are readable through the API and the run summary
+          # without downloading logs.
+          python - <<'PY'
+          import json, pathlib
+          def esc(s):
+              return s.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          def title(s):
+              return esc(s).replace(":", "%3A").replace(",", "%2C")
+          rep = pathlib.Path("harnis-check-kind.json")
+          if rep.exists():
+              fails = [r for r in json.loads(rep.read_text())["results"] if r["status"] == "FAIL"]
+              for r in fails[:8]:
+                  print(f"::error title={title('check failed - ' + r['group'] + ' / ' + r['check'])}::{esc(r['detail'][:900])}")
+          log = pathlib.Path("harnis-check-kind.log")
+          if log.exists():
+              tail = "\n".join(log.read_text(errors="replace").splitlines()[-40:])
+              print(f"::error title=feature check output (last 40 lines)::{esc(tail)}")
+          PY
 
       - name: Upload the feature check report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: harnis-check-kind
-          path: harnis-check-kind.json
+          path: |
+            harnis-check-kind.json
+            harnis-check-kind.log
           if-no-files-found: ignore
 
       - name: Cluster diagnostics
         if: failure()
-        run: python scripts/k8s_local.py debug
+        shell: bash
+        run: |
+          python scripts/k8s_local.py debug 2>&1 | tee k8s-debug.log
+          python -c "import pathlib; t='\n'.join(pathlib.Path('k8s-debug.log').read_text(errors='replace').splitlines()[-60:]); print('::warning title=cluster diagnostics (last 60 lines)::' + t.replace('%','%25').replace('\r','').replace('\n','%0A'))"
 
       - name: Delete the cluster
         if: always()
