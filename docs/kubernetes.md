@@ -36,7 +36,7 @@ Redis charts, CloudNativePG, or the Redis Stack images).
 
 ## Try it locally with kind
 
-Before a real cluster, run the chart on [kind](https://kind.sigs.k8s.io/) (works with Docker Desktop on Windows and macOS):
+Before a real cluster, run the chart on [kind](https://kind.sigs.k8s.io/) v0.24 or newer (works with Docker Desktop on Windows and macOS; older kind releases don't enforce NetworkPolicy, so Harnis refuses to run sandbox commands on them):
 
 ```bash
 winget install Kubernetes.kind Kubernetes.kubectl Helm.Helm   # macOS: brew install kind kubectl helm

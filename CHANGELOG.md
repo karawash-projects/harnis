@@ -49,6 +49,7 @@ An independent review of this release led to these fixes before publication:
 - The semantic cache now uses the brute-force fallback on a Redis database other than 0 (RediSearch only indexes db 0) and recreates its index if it was dropped (a FLUSHDB on any database drops every index).
 - Dependency installs work under gVisor: install runs get the egress proxy by IP address, because gVisor can't use Docker's embedded DNS.
 - Kubernetes sandbox: before copying the workspace in and running the command, Harnis checks inside the Pod that NetworkPolicy already blocks it, and refuses the command if it doesn't within `sandbox.networkProbe.timeoutSeconds` (fail closed). Some CNIs, kind's kindnetd among them, apply policy to a new Pod 1 to 3 seconds after it starts, and code could reach the network in that window.
+- `scripts/k8s_local.py` refuses kind releases older than v0.24, which don't enforce NetworkPolicy; the `k8s-e2e` workflow pins kind v0.33.0 and shows failed checks as annotations.
 - `tasks.py dev` only reloads on changes to the `harnis` package; it used to restart the API in the middle of turns whenever an agent wrote a Python file into the workspaces folder.
 - `tasks.py` reads `.env` values with inline comments correctly (`sso-up` failed on a fresh install), and sees provider keys from the shell environment the way the API does.
 

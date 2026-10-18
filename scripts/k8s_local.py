@@ -136,6 +136,11 @@ def check_tools() -> None:
                      "and wait until it is running.\n" + (r.stderr.strip()[:500]))
     if r.stdout.strip() != "linux":
         raise Failed("Docker is in Windows-containers mode; switch Docker Desktop to Linux containers.")
+    v = quiet("kind", "version", timeout=30)
+    m = re.search(r"v(\d+)\.(\d+)", v.stdout or "")
+    if m and (int(m.group(1)), int(m.group(2))) < (0, 24):
+        raise Failed(f"kind {m.group(0)} is too old: its network plugin enforces NetworkPolicy only from v0.24, "
+                     "and Harnis refuses to run sandbox commands without it. Install kind v0.24 or newer.")
 
 
 def cluster_exists() -> bool:
