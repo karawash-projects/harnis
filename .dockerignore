@@ -1,0 +1,12 @@
+.git
+.venv
+venv
+.workspaces
+**/__pycache__
+**/.pytest_cache
+.env
+tests
+redteam
+docs
+*.md
+!README.md

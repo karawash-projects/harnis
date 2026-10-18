@@ -1,0 +1,94 @@
+# Values for the Harnis chart on a LOCAL kind cluster (scripts/k8s_local.py).
+# Never use them anywhere else: they hold fixed, public test credentials,
+# enable the deterministic `mock` model and run the API with ENV=development.
+#
+#   helm upgrade --install harnis deploy/helm/harnis -n harnis --create-namespace \
+#     -f deploy/local-k8s/values-kind.yaml --kube-context kind-harnis --wait
+#
+# Postgres and Redis come from deploy/local-k8s/postgres.yaml and redis.yaml
+# (namespace harnis-deps).
+
+image:
+  repository: harnis
+  tag: local
+  # Loaded into the node with `kind load docker-image`; never pulled.
+  pullPolicy: Never
+
+api:
+  # One replica: kind's default storage class (local-path) is ReadWriteOnce
+  # only, so session workspaces stay on a per-Pod emptyDir (see
+  # docs/kubernetes.md, "Session workspaces and multiple replicas").
+  replicaCount: 1
+  # The chart always renders ENV=production into its ConfigMap, which refuses
+  # the mock model. `env` entries take precedence over `envFrom`, so this
+  # switches the local API to development mode.
+  extraEnv:
+    - name: ENV
+      value: development
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+      ephemeral-storage: 128Mi
+    limits:
+      memory: 1Gi
+      ephemeral-storage: 1Gi
+  preStopSleepSeconds: 2
+  terminationGracePeriodSeconds: 30
+
+config:
+  LLM_PROVIDERS: "mock"
+  CACHE_ENABLED: "true"
+  OTEL_ENABLED: "false"
+  DB_POOL_MAX: "5"
+
+secrets:
+  # Fixed so scripts/k8s_local.py check can mint tokens for harnis_check.py.
+  # Local-only value; anyone who reads this file can sign tokens for this cluster.
+  jwtSecret: "kind-local-only-jwt-secret-not-for-production-0123456789abcdef"
+
+externalDatabase:
+  host: postgres.harnis-deps.svc.cluster.local
+  port: 5432
+  database: harnis
+  sslmode: disable
+  appPassword: harnis_app
+  ownerUser: postgres
+  ownerPassword: postgres
+
+externalRedis:
+  host: redis.harnis-deps.svc.cluster.local
+  port: 6379
+  db: 0
+  tls: false
+
+workspaces:
+  emptyDirSizeLimit: 2Gi
+  persistence:
+    enabled: false
+
+sandbox:
+  # The chart sets SANDBOX_BACKEND=kubernetes: one Pod per command in the
+  # harnis-sandbox namespace.
+  image:
+    repository: harnis-sandbox
+    tag: local
+    pullPolicy: Never
+  # runc on kind. gVisor is tested separately (docs/gvisor.md).
+  runtimeClassName: ""
+  resources:
+    cpu: "500m"
+    memory: 256Mi
+    ephemeralStorage: 512Mi
+  podStartTimeoutSeconds: 120
+  networkPolicy:
+    enabled: true
+    denyAllInNamespace: true
+  reaper:
+    enabled: true
+
+podDisruptionBudget:
+  enabled: false
+
+maintenance:
+  enabled: true

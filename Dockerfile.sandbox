@@ -1,0 +1,21 @@
+# Image used for agent commands and test runs. Kept small and boring:
+# Python + pytest, no compilers, no network tools, non-root by default.
+# (The harness additionally forces a non-root uid, read-only root, no network,
+#  no capabilities and resource limits at run time.)
+FROM python:3.12-slim
+# WITH_NODE=true adds Node.js and npm, for projects that install npm packages
+# with install_dependencies: docker build -f Dockerfile.sandbox --build-arg WITH_NODE=true .
+ARG WITH_NODE=false
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+RUN if [ "$WITH_NODE" = "true" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends nodejs npm && rm -rf /var/lib/apt/lists/*; \
+    fi
+# The allowlisting proxy used for approved dependency installs runs from this
+# image too (standard library only).
+COPY harnis/egress_proxy.py /opt/harnis/egress_proxy.py
+RUN pip install "pytest>=8" && \
+    rm -rf /root/.cache && \
+    find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true
+WORKDIR /sandbox/workspace
+USER 65534:65534
+CMD ["python", "--version"]

@@ -1,0 +1,84 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Unit tests on all three operating systems, using the same task runner a
+  # developer uses. Service-backed tests skip themselves where no services run.
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.python }}" }
+      - run: python tasks.py install
+      - run: python tasks.py test unit
+
+  # Full suite (Postgres RLS, API end to end, Docker sandbox) and the red team.
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: harnis }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis/redis-stack-server:7.4.0-v1
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python tasks.py install
+      - run: python tasks.py sandbox-image
+      - run: python tasks.py test all
+      - name: red team against a live API
+        env: { LLM_PROVIDERS: mock, WORKSPACES_DIR: /tmp/ws }
+        run: |
+          python tasks.py migrate
+          .venv/bin/python -m harnis.api & sleep 5
+          python tasks.py redteam
+          python tasks.py eval -- --providers mock
+      - run: docker build -t harnis:ci .
+
+  # Every commit in a pull request must carry a Signed-off-by line (see CONTRIBUTING.md).
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Check sign-off on every commit
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            author=$(git log -1 --format='%an <%ae>' "$c")
+            if ! git log -1 --format=%B "$c" | grep -qF "Signed-off-by: $author"; then
+              echo "::error::commit $c is not signed off by its author ($author)"
+              missing=1
+            fi
+          done
+          exit $missing
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint --strict deploy/helm/harnis

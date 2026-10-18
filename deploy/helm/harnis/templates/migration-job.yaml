@@ -1,0 +1,58 @@
+{{- if .Values.migrations.enabled }}
+# Applies SQL migrations and (re)creates the harnis_app role before the API
+# Pods of a new release start. A failed migration fails the install/upgrade
+# and leaves the running release untouched.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "harnis.componentName" (list . "migrate") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "migrate") | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrations.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "harnis.componentLabels" (list . "migrate") | nindent 8 }}
+      {{- with .Values.jobs.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: Never
+      # Runs before the chart's ServiceAccount exists and needs no API access.
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- include "harnis.jobPodSecurity" . | nindent 6 }}
+      containers:
+        - name: migrate
+          image: {{ include "harnis.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "harnis.migrate"]
+          env:
+            - name: HOME
+              value: /tmp
+            - name: MIGRATION_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "harnis.migrationSecretName" . }}
+                  key: MIGRATION_DATABASE_URL
+            # Password set on the harnis_app role; must match DATABASE_URL.
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "harnis.migrationSecretName" . }}
+                  key: APP_DB_PASSWORD
+          securityContext:
+            {{- toYaml .Values.api.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          {{- include "harnis.jobVolumeMounts" . | nindent 10 }}
+      {{- include "harnis.jobVolumes" . | nindent 6 }}
+{{- end }}

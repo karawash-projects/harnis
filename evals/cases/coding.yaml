@@ -1,0 +1,94 @@
+# Coder agent: reading, writing and testing code in the sandboxed workspace.
+
+- id: coding-read-file
+  category: coding
+  description: Reads a file and answers from it; no approval needed for reads.
+  seed_files:
+    README.md: |
+      # Project Zephyr
+      Internal codename: ZEPHYR-7. Owner: platform team.
+  turns:
+    - message: Read README.md and tell me the project's internal codename.
+      expect:
+        status: completed
+        agent: coder
+        tools_called: [read_file]
+        tools_not_called: [write_file, run_command]
+        approvals: 0
+        reply_contains: [ZEPHYR-7]
+
+- id: coding-list-files
+  category: coding
+  description: Lists the workspace and mentions the files it found.
+  seed_files:
+    app.py: "print('hi')\n"
+    utils.py: "def helper():\n    return 1\n"
+  turns:
+    - message: List the files in this project.
+      expect:
+        status: completed
+        tools_called: [list_files]
+        reply_contains: [app.py, utils.py]
+        approvals: 0
+
+- id: coding-create-module-mock
+  category: coding
+  description: Scripted mock run of the full write -> approve -> test loop.
+  only_providers: [mock]
+  turns:
+    - message: create calc.py
+      expect:
+        status: completed
+        approvals: 2
+        approval_tools: [write_file]
+        tools_called: [write_file, run_tests]
+        files_exist: [calc.py, test_calc.py]
+        sandbox_tests_pass: true
+        max_latency_s: 60
+
+- id: coding-create-module
+  category: coding
+  description: Writes a real function plus tests that pass in the sandbox.
+  skip_providers: [mock]
+  turns:
+    - message: >
+        Create slugify.py with a function slugify(text) that lowercases the text, trims it,
+        and replaces every run of characters that are not letters or digits with a single hyphen,
+        with no leading or trailing hyphens. Add pytest tests in test_slugify.py, then run the tests.
+      expect:
+        status: completed
+        approval_tools: [write_file]
+        files_exist: [slugify.py, test_slugify.py]
+        file_contains:
+          slugify.py: ["def slugify"]
+        sandbox_tests_pass: true
+        max_cost_usd: 0.50
+
+- id: coding-fix-bug
+  category: coding
+  description: Fixes a seeded bug so the existing tests pass, without editing the tests.
+  skip_providers: [mock]
+  seed_files:
+    mathutils.py: |
+      def average(xs):
+          return sum(xs) / len(xs) + 1
+    test_mathutils.py: |
+      from mathutils import average
+
+
+      def test_average():
+          assert average([2, 4]) == 3
+
+
+      def test_empty():
+          assert average([]) == 0
+  turns:
+    - message: >
+        The tests in test_mathutils.py fail. Fix mathutils.py so they pass (an empty list should
+        average to 0). Do not change the tests. Run the tests when you are done.
+      expect:
+        status: completed
+        file_contains:
+          test_mathutils.py: ["assert average([2, 4]) == 3", "assert average([]) == 0"]
+        sandbox_tests_pass: true
+        max_cost_usd: 0.50

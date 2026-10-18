@@ -1,0 +1,22 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- $p := .Values.podDisruptionBudget }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "harnis.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "api") | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "harnis.apiSelectorLabels" . | nindent 6 }}
+  {{- if not (kindIs "invalid" $p.minAvailable) }}
+  minAvailable: {{ $p.minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ default 1 $p.maxUnavailable }}
+  {{- end }}
+  # Pods that are not ready yet may always be evicted (avoids blocking node
+  # drains during an outage).
+  unhealthyPodEvictionPolicy: AlwaysAllow
+{{- end }}

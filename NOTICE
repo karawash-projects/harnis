@@ -1,0 +1,10 @@
+Harnis
+Copyright 2026 Ahmad Karawash
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE)
+and is provided "AS IS", WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
+
+This distribution contains no third-party code. Dependencies, container base
+images, models and services used with Harnis are provided by third parties
+under their own licenses and terms; users are responsible for reviewing them
+and obtaining any licenses they need.

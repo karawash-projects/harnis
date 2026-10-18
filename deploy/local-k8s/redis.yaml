@@ -1,0 +1,84 @@
+# Throwaway Redis Stack (RediSearch enables the vector cache) for the local
+# kind cluster ONLY: no password, no persistence. Same image as docker-compose.yml.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: harnis-deps
+  labels:
+    app.kubernetes.io/part-of: harnis-local
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: harnis-deps
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: harnis-local
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/part-of: harnis-local
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: redis
+          image: redis/redis-stack-server:7.4.0-v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 2
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 20
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: harnis-deps
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: harnis-local
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP

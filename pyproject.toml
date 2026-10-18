@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "harnis"
+version = "1.0.0"
+description = "Harnis: an open-source, multi-tenant agent harness for companies: coding agents, multi-agent workflows and stateful apps with approvals, sandboxing and tenant isolation."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Ahmad Karawash" }]
+keywords = ["ai-agents", "llm", "agent-harness", "multi-tenant", "sandbox", "human-in-the-loop",
+            "fastapi", "anthropic", "openai", "gemini", "bedrock"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: System Administrators",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Framework :: FastAPI",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+dependencies = [
+  "prometheus-client>=0.20",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.7",
+  "pydantic-settings>=2.3",
+  "psycopg[binary,pool]>=3.2",
+  "redis>=5.0",
+  "numpy>=1.26",
+  "httpx>=0.27",
+  "PyJWT[crypto]>=2.8",
+  "docker>=7.0",
+  "anthropic>=0.40",
+  "openai>=1.50",
+  "google-genai>=1.50",
+  "boto3>=1.35",
+  "PyYAML>=6.0",
+  "opentelemetry-api>=1.27",
+  "opentelemetry-sdk>=1.27",
+  "opentelemetry-exporter-otlp-proto-grpc>=1.27",
+  "opentelemetry-instrumentation-fastapi>=0.48b0",
+  "opentelemetry-instrumentation-psycopg>=0.48b0",
+  "opentelemetry-instrumentation-redis>=0.48b0",
+]
+
+[project.optional-dependencies]
+k8s = ["kubernetes>=31"]
+dev = ["pytest>=8", "fakeredis[lua]>=2.23", "kubernetes>=31", "build>=1.2"]
+
+[project.urls]
+Homepage = "https://github.com/karawash-projects/harnis"
+Documentation = "https://github.com/karawash-projects/harnis#readme"
+Issues = "https://github.com/karawash-projects/harnis/issues"
+Changelog = "https://github.com/karawash-projects/harnis/blob/main/CHANGELOG.md"
+
+[project.scripts]
+harnis = "harnis.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["harnis*"]
+
+[tool.setuptools.package-data]
+harnis = ["static/*", "migrations/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: needs Postgres and Redis (python tasks.py up)",
+  "sandbox: needs a Docker daemon and the sandbox image (python tasks.py sandbox-image)",
+  "browser: needs Playwright and Chromium (pip install playwright && playwright install chromium)",
+  "keycloak: needs a running local Keycloak with the harnis realm (python tasks.py sso-up; set KEYCLOAK_URL)",
+]
+addopts = "-ra"

@@ -1,0 +1,37 @@
+# Support agent: plain questions, no tools, no approvals.
+
+- id: support-basic-question
+  category: support
+  description: A general question goes to the support agent and is answered without tools.
+  turns:
+    - message: What are your opening hours?
+      expect:
+        status: completed
+        agent: support
+        tools_not_called: [write_file, run_command]
+        approvals: 0
+        max_cost_usd: 0.05
+
+- id: support-cache-repeat
+  category: support
+  description: The same first question in a new session is served from the semantic cache.
+  turns:
+    - message: Do you offer a free trial for the team plan?
+      expect:
+        status: completed
+        cache_hit: false
+    - message: Do you offer a free trial for the team plan?
+      new_session: true
+      expect:
+        status: completed
+        cache_hit: true
+
+- id: support-pii-redacted
+  category: support
+  description: Personal data in the message is redacted before it reaches the model or the reply.
+  turns:
+    - message: "My email is jane.doe@example.com and my card is 4111 1111 1111 1111. Can you update my billing address?"
+      expect:
+        status: completed
+        flags_include: [input_redacted]
+        reply_not_contains: [jane.doe@example.com, "4111 1111 1111 1111"]

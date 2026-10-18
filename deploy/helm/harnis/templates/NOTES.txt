@@ -1,0 +1,74 @@
+Harnis {{ .Chart.AppVersion }} is installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+Sandbox Pods run in namespace "{{ include "harnis.sandboxNamespace" . }}".
+
+{{- if .Values.ingress.enabled }}
+
+The API is available at:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}/
+{{- end }}
+{{- else }}
+
+Reach the API locally:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "harnis.fullname" . }} 8000:{{ .Values.service.port }}
+  curl http://127.0.0.1:8000/ready
+{{- end }}
+
+Check the rollout and the last migration:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "harnis.fullname" . }}
+  kubectl -n {{ .Release.Namespace }} get jobs,cronjobs -l app.kubernetes.io/instance={{ .Release.Name }}
+{{- if not .Values.secrets.existingSecret }}
+{{- if not (include "harnis.databaseUrl" .) }}
+
+WARNING: no database configured. Set externalDatabase.host (or .url) and
+         externalDatabase.appPassword, or use secrets.existingSecret.
+{{- end }}
+{{- if and (not .Values.secrets.existingMigrationSecret) (not (include "harnis.migrationDatabaseUrl" .)) }}
+
+WARNING: no migration database URL. Set externalDatabase.ownerPassword (or
+         .migrationUrl): migrations and maintenance run as the owner role.
+{{- end }}
+{{- if and (not .Values.secrets.existingMigrationSecret) (not .Values.externalDatabase.appPassword) }}
+
+WARNING: externalDatabase.appPassword is empty. The migration Job sets the
+         harnis_app password from it and will fail without it.
+{{- end }}
+{{- if not (include "harnis.redisUrl" .) }}
+
+WARNING: no Redis configured. Set externalRedis.host (or .url).
+{{- end }}
+{{- if not .Values.secrets.jwtSecret }}
+
+NOTE: JWT_SECRET was generated and stored in Secret {{ include "harnis.fullname" . }}.
+      Tokens must be signed with it (or replace decode_token with your IdP).
+{{- end }}
+{{- if not .Values.secrets.existingMigrationSecret }}
+
+NOTE: Secret {{ include "harnis.migrationSecretName" . }} (owner database credentials) is a
+      Helm hook resource and is not removed by `helm uninstall`. Delete it by hand:
+        kubectl -n {{ .Release.Namespace }} delete secret {{ include "harnis.migrationSecretName" . }}
+{{- end }}
+{{- end }}
+{{- $replicas := ternary (int .Values.autoscaling.maxReplicas) (int .Values.api.replicaCount) .Values.autoscaling.enabled }}
+{{- if and (gt $replicas 1) (not .Values.workspaces.persistence.enabled) }}
+
+WARNING: more than one API replica, but session workspaces are on per-Pod
+         emptyDir volumes. An approval decided on another replica resumes the
+         session with an empty workspace there. Enable
+         workspaces.persistence with ReadWriteMany storage, or run one replica.
+{{- end }}
+{{- if not .Values.sandbox.runtimeClassName }}
+
+NOTE: sandbox.runtimeClassName is empty: sandbox Pods use the default runtime
+      (runc), which shares the node kernel. Use gVisor or Kata for untrusted code.
+{{- end }}
+{{- if not (include "harnis.sandboxNamespaceDedicated" .) }}
+
+WARNING: sandbox Pods run in the release namespace. The API may then create
+         Pods next to its own Secrets. Use a dedicated sandbox namespace.
+{{- end }}
+
+Security reminders (see docs/kubernetes.md):
+  * Sandbox network isolation needs a CNI that enforces NetworkPolicy.
+  * PID limits come from the kubelet setting podPidsLimit on sandbox nodes;
+    the Pod spec cannot set them.

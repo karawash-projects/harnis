@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.workspaces/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+evals/reports/
+*.rdb
+
+.k8s-local/
+backups/

@@ -1,0 +1,15 @@
+{{- if and .Values.sandbox.resourceQuota.enabled (include "harnis.sandboxNamespaceDedicated" .) }}
+# Upper bound on everything sandboxes can use at once. When the quota is
+# full, new sandbox Pods are rejected and the command fails with an error
+# instead of starving the cluster.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "harnis.componentName" (list . "sandbox-quota") }}
+  namespace: {{ include "harnis.sandboxNamespace" . }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "sandbox") | nindent 4 }}
+spec:
+  hard:
+    {{- toYaml .Values.sandbox.resourceQuota.hard | nindent 4 }}
+{{- end }}

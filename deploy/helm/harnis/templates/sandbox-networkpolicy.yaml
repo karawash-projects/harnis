@@ -1,0 +1,37 @@
+{{- if .Values.sandbox.networkPolicy.enabled }}
+# Sandbox Pods get no network at all: no ingress, no egress (not even DNS).
+# File transfer and command execution use the exec API, which goes through
+# the API server and the kubelet, not the Pod network, so it is unaffected.
+# Enforced only by CNIs that implement NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "harnis.componentName" (list . "sandbox-deny-all") }}
+  namespace: {{ include "harnis.sandboxNamespace" . }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "sandbox") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      harnis/sandbox: "true"
+  policyTypes:
+    - Ingress
+    - Egress
+{{- if and .Values.sandbox.networkPolicy.denyAllInNamespace (include "harnis.sandboxNamespaceDedicated" .) }}
+---
+# Defense in depth: every Pod in the dedicated sandbox namespace, labeled
+# or not, is isolated too.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "harnis.componentName" (list . "sandbox-ns-deny-all") }}
+  namespace: {{ include "harnis.sandboxNamespace" . }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "sandbox") | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+{{- end }}
+{{- end }}

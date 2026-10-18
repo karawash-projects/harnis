@@ -1,0 +1,59 @@
+# Runs the Docker sandbox test suite under gVisor (runsc) on every push and
+# pull request, so a change that breaks sandboxes under gVisor is caught
+# before it reaches a production host that uses SANDBOX_RUNTIME=runsc.
+# Local equivalent (Linux or WSL2): python scripts/gvisor_check.py, see docs/gvisor.md.
+name: gvisor
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gvisor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sandbox-under-gvisor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Install gVisor (runsc) from the official apt repository
+        # https://gvisor.dev/docs/user_guide/install/
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+          curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" \
+            | sudo tee /etc/apt/sources.list.d/gvisor.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y runsc
+          runsc --version
+
+      - name: Register runsc with Docker
+        run: |
+          sudo runsc install
+          sudo systemctl restart docker
+          cat /etc/docker/daemon.json
+          docker info --format '{{json .Runtimes}}' | python3 -c 'import json, sys; print(sorted(json.load(sys.stdin)))'
+
+      - name: Build the sandbox image
+        run: docker build -f Dockerfile.sandbox -t harnis-sandbox:latest .
+
+      - name: Install Harnis with dev extras
+        run: python -m pip install -e ".[dev]"
+
+      - name: Sandbox tests under gVisor
+        run: python scripts/gvisor_check.py --python python
+
+      - name: Docker and runsc diagnostics
+        if: failure()
+        run: |
+          docker info || true
+          sudo journalctl -u docker --no-pager -n 200 || true
+          sudo dmesg | tail -n 50 || true

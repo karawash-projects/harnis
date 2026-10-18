@@ -1,0 +1,12 @@
+# Robustness: runaway loops are stopped.
+
+- id: loop-breaker
+  category: robustness
+  description: An agent repeating the same tool call is warned, then escalated to a human.
+  only_providers: [mock]
+  turns:
+    - message: "repeat: list the files"
+      expect:
+        status: escalated
+        flags_include: [loop_detected]
+        max_steps: 25

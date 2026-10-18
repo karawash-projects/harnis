@@ -1,0 +1,52 @@
+name: Feature request
+description: Propose a new capability or a change in behaviour.
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Significant changes (new components, new dependencies, changes to the security model, the API, the database schema or the plugin SDK) are best discussed here before implementation. Harnis is provided as is; there is no commitment to implement requests (see GOVERNANCE.md).
+
+        Consider whether your idea can be built as a plugin (docs/plugins.md) without changing Harnis itself.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and why is it hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How it could work, including any API, configuration or schema changes.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches, workarounds you use today, or a plugin-based approach.
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and tenancy impact
+      description: Does this touch authentication, tenant isolation, approvals, the sandbox, data sent to providers, or add a dependency? How are the invariants in CONTRIBUTING.md preserved?
+    validations:
+      required: true
+  - type: dropdown
+    id: compatibility
+    attributes:
+      label: Compatibility
+      options:
+        - Backward compatible
+        - Breaking change (see GOVERNANCE.md, Versioning)
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to implement this (with tests and a DCO sign-off).

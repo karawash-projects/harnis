@@ -1,0 +1,318 @@
+{
+  "realm": "harnis",
+  "displayName": "Harnis (local testing)",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": false,
+  "accessTokenLifespan": 900,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 3600,
+  "ssoSessionMaxLifespan": 36000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanLogin": 1800,
+  "groups": [
+    {
+      "name": "harnis-users",
+      "path": "/harnis-users"
+    },
+    {
+      "name": "harnis-reviewers",
+      "path": "/harnis-reviewers"
+    },
+    {
+      "name": "harnis-admins",
+      "path": "/harnis-admins"
+    },
+    {
+      "name": "platform-ops",
+      "path": "/platform-ops"
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@acme.example.com",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "User",
+      "attributes": {
+        "tenant_id": [
+          "acme"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "harnis-local-only",
+          "temporary": false
+        }
+      ],
+      "requiredActions": [],
+      "groups": [
+        "/harnis-users"
+      ]
+    },
+    {
+      "username": "rita",
+      "enabled": true,
+      "email": "rita@acme.example.com",
+      "emailVerified": true,
+      "firstName": "Rita",
+      "lastName": "Reviewer",
+      "attributes": {
+        "tenant_id": [
+          "acme"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "harnis-local-only",
+          "temporary": false
+        }
+      ],
+      "requiredActions": [],
+      "groups": [
+        "/harnis-reviewers"
+      ]
+    },
+    {
+      "username": "adam",
+      "enabled": true,
+      "email": "adam@acme.example.com",
+      "emailVerified": true,
+      "firstName": "Adam",
+      "lastName": "Admin",
+      "attributes": {
+        "tenant_id": [
+          "acme"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "harnis-local-only",
+          "temporary": false
+        }
+      ],
+      "requiredActions": [],
+      "groups": [
+        "/harnis-admins"
+      ]
+    },
+    {
+      "username": "gina",
+      "enabled": true,
+      "email": "gina@globex.example.com",
+      "emailVerified": true,
+      "firstName": "Gina",
+      "lastName": "Globex",
+      "attributes": {
+        "tenant_id": [
+          "globex"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "harnis-local-only",
+          "temporary": false
+        }
+      ],
+      "requiredActions": [],
+      "groups": [
+        "/harnis-admins"
+      ]
+    },
+    {
+      "username": "ops",
+      "enabled": true,
+      "email": "ops@harnis.example.com",
+      "emailVerified": true,
+      "firstName": "Olga",
+      "lastName": "Ops",
+      "attributes": {
+        "tenant_id": [
+          "platform"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "harnis-local-only",
+          "temporary": false
+        }
+      ],
+      "requiredActions": [],
+      "groups": [
+        "/platform-ops"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "harnis-console",
+      "name": "Harnis web console",
+      "description": "Public SPA client for the Harnis console (authorization code + PKCE S256).",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "fullScopeAllowed": true,
+      "rootUrl": "",
+      "baseUrl": "http://127.0.0.1:8000/",
+      "redirectUris": [
+        "http://127.0.0.1:8000/*",
+        "http://localhost:8000/*",
+        "http://127.0.0.1:8011/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://127.0.0.1:8000/*##http://localhost:8000/*##http://127.0.0.1:8011/*",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "harnis-api audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "harnis-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        },
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "multivalued": "false",
+            "aggregate.attrs": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "harnis-check",
+      "name": "Harnis feature check (LOCAL TESTING ONLY)",
+      "description": "LOCAL TESTING ONLY. Public client with the resource owner password grant so scripts/harnis_check.py and tests/test_keycloak.py can get tokens without a browser. Never create a client like this in a real identity provider.",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "harnis-api audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "harnis-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        },
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "multivalued": "false",
+            "aggregate.attrs": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\":[{\"name\":\"username\",\"displayName\":\"${username}\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"validations\":{\"length\":{\"min\":3,\"max\":255},\"username-prohibited-characters\":{},\"up-username-not-idn-homograph\":{}},\"multivalued\":false},{\"name\":\"email\",\"displayName\":\"${email}\",\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"validations\":{\"email\":{},\"length\":{\"max\":255}},\"multivalued\":false},{\"name\":\"firstName\",\"displayName\":\"${firstName}\",\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"multivalued\":false},{\"name\":\"lastName\",\"displayName\":\"${lastName}\",\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"multivalued\":false},{\"name\":\"tenant_id\",\"displayName\":\"Harnis tenant\",\"permissions\":{\"view\":[\"admin\"],\"edit\":[\"admin\"]},\"validations\":{\"pattern\":{\"pattern\":\"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$\",\"error-message\":\"letters, digits, '_', '.', '-' (max 64)\"}},\"annotations\":{},\"multivalued\":false}],\"groups\":[{\"name\":\"user-metadata\",\"displayHeader\":\"User metadata\",\"displayDescription\":\"Attributes, which refer to user metadata\"}]}"
+          ]
+        }
+      }
+    ]
+  }
+}

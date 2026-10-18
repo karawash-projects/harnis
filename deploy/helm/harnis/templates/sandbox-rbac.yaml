@@ -1,0 +1,36 @@
+# The API's service account may manage Pods in the sandbox namespace and
+# nothing else: a namespaced Role, bound only there. It cannot read Secrets,
+# create other workloads, or touch any other namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "harnis.componentName" (list . "sandbox-runner") }}
+  namespace: {{ include "harnis.sandboxNamespace" . }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "sandbox") | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    # list: the reaper finds leftover sandbox Pods.
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    # Exec over WebSocket is authorized as "get" on older API servers and
+    # as "create" on newer ones.
+    verbs: ["create", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "harnis.componentName" (list . "sandbox-runner") }}
+  namespace: {{ include "harnis.sandboxNamespace" . }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "sandbox") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "harnis.componentName" (list . "sandbox-runner") }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "harnis.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

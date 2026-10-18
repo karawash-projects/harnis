@@ -1,0 +1,71 @@
+{{- if .Values.maintenance.enabled }}
+# Hourly: creates upcoming ledger partitions and refreshes the analytics view
+# (python -m harnis.maintenance), as the owner role.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "harnis.componentName" (list . "maintenance") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "maintenance") | nindent 4 }}
+spec:
+  schedule: {{ .Values.maintenance.schedule | quote }}
+  {{- with .Values.maintenance.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.maintenance.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.maintenance.activeDeadlineSeconds }}
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "harnis.componentLabels" (list . "maintenance") | nindent 12 }}
+          {{- with .Values.jobs.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          {{- include "harnis.jobPodSecurity" . | nindent 10 }}
+          containers:
+            - name: maintenance
+              image: {{ include "harnis.image" . | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["python", "-m", "harnis.maintenance"]
+              # Settings (RETENTION_*, WORKSPACES_DIR) without the API's secrets.
+              envFrom:
+                - configMapRef:
+                    name: {{ include "harnis.configMapName" . }}
+              env:
+                - name: HOME
+                  value: /tmp
+                - name: MIGRATION_DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "harnis.migrationSecretName" . }}
+                      key: MIGRATION_DATABASE_URL
+              securityContext:
+                {{- toYaml .Values.api.securityContext | nindent 16 }}
+              resources:
+                {{- toYaml .Values.maintenance.resources | nindent 16 }}
+              {{- include "harnis.jobVolumeMounts" . | nindent 14 }}
+                {{- if .Values.workspaces.persistence.enabled }}
+                # Shared workspaces: retention and the orphan sweep remove deleted sessions' files.
+                - name: workspaces
+                  mountPath: {{ .Values.workspaces.mountPath }}
+                {{- end }}
+          {{- include "harnis.jobVolumes" . | nindent 10 }}
+            {{- if .Values.workspaces.persistence.enabled }}
+            - name: workspaces
+              persistentVolumeClaim:
+                claimName: {{ default (include "harnis.componentName" (list . "workspaces")) .Values.workspaces.persistence.existingClaim }}
+            {{- end }}
+{{- end }}

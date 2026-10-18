@@ -1,0 +1,553 @@
+# Default values for the Harnis chart.
+#
+# The chart deploys the Harnis API, its migrations and maintenance jobs, and
+# the RBAC + NetworkPolicies for per-command sandbox Pods. It does NOT deploy
+# Postgres or Redis: use managed services (RDS / Cloud SQL / Azure Database,
+# ElastiCache / Memorystore / Redis Cloud) or separate charts, and set
+# externalDatabase / externalRedis below. See docs/kubernetes.md.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# -- Harnis API image (built from the repository's Dockerfile).
+image:
+  repository: harnis
+  # Defaults to the chart's appVersion.
+  tag: ""
+  # Pin by digest in production, e.g. "sha256:..." (takes precedence over tag).
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# Pull secrets for the API image (in the release namespace).
+imagePullSecrets: []
+#  - name: regcred
+
+# -----------------------------------------------------------------------------
+# API Deployment
+# -----------------------------------------------------------------------------
+api:
+  # Ignored when autoscaling.enabled is true. More than one replica needs
+  # shared workspace storage: see `workspaces` below.
+  replicaCount: 2
+
+  # Override the image's command/args (default: uvicorn on port 8000).
+  command: []
+  args: []
+
+  containerPort: 8000
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+      ephemeral-storage: 256Mi
+    limits:
+      memory: 1Gi
+      ephemeral-storage: 1Gi
+
+  # Graceful drain: on termination the Pod is first removed from Service
+  # endpoints; preStop sleeps so in-flight connections move away before
+  # uvicorn receives SIGTERM, then uvicorn finishes running requests.
+  # terminationGracePeriodSeconds must cover preStop + the longest request
+  # (a turn can wait on model calls: LLM_TIMEOUT_SECONDS x retries).
+  preStopSleepSeconds: 10
+  terminationGracePeriodSeconds: 120
+
+  # /ready checks Postgres and Redis; /health only checks the process.
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 2
+    failureThreshold: 60
+
+  # Pod-level security context. 10001 is the `app` user baked into the image.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    privileged: false
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Size of the in-memory /tmp.
+  tmpSizeLimit: 128Mi
+
+  # Spread replicas across zones and nodes. A labelSelector matching the API
+  # Pods is added automatically when a constraint has none.
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  priorityClassName: ""
+
+  # Extra environment variables (list of EnvVar) and envFrom sources.
+  extraEnv: []
+  #  - name: PRICING_OVERRIDES
+  #    value: '{"claude-sonnet-5-5": [3.0, 15.0]}'
+  extraEnvFrom: []
+  #  - secretRef:
+  #      name: my-extra-secret
+  extraVolumes: []
+  extraVolumeMounts: []
+
+# -----------------------------------------------------------------------------
+# Non-secret settings (rendered into a ConfigMap, loaded with envFrom).
+# Any Harnis setting can be added here by its environment variable name.
+# ENV, SANDBOX_*, WORKSPACES_DIR are set by the chart from other values.
+# -----------------------------------------------------------------------------
+config:
+  # Failover order. Providers without credentials are skipped. "mock" is
+  # refused when ENV=production.
+  LLM_PROVIDERS: "anthropic,openai,gemini,nova"
+  ANTHROPIC_MODEL: "claude-sonnet-5-5"
+  ANTHROPIC_FAST_MODEL: "claude-haiku-5-5"
+  OPENAI_MODEL: "gpt-5.5"
+  OPENAI_FAST_MODEL: "gpt-5.4-mini"
+  GEMINI_MODEL: "gemini-3.8-flash"
+  GEMINI_FAST_MODEL: "gemini-3.5-flash-lite"
+  # Vertex AI instead of an API key (credentials via Workload Identity):
+  # GEMINI_USE_VERTEXAI: "true"
+  # GEMINI_VERTEX_PROJECT: "my-project"
+  # GEMINI_VERTEX_LOCATION: "us-central1"
+  # Amazon Nova on Bedrock: set a region; credentials via IRSA / Pod Identity
+  # (annotate serviceAccount) or keys in the Secret.
+  AWS_REGION: ""
+  NOVA_MODEL: "us.amazon.nova-2-lite-v1:0"
+  NOVA_FAST_MODEL: "us.amazon.nova-micro-v1:0"
+  # Data retention in days (0 = keep forever), applied by the maintenance CronJob.
+  RETENTION_SESSION_DAYS: "0"
+  RETENTION_AUDIT_DAYS: "0"
+  # Model prices, USD per million tokens, for every model in LLM_PROVIDERS.
+  # ENV=production refuses to start without them (see .env.example).
+  PRICING_OVERRIDES: ""   # e.g. '{"claude-sonnet-5-5": [3.0, 15.0], "claude-haiku-5-5": [1.0, 5.0]}'
+  DB_POOL_MIN: "1"
+  DB_POOL_MAX: "10"
+  CACHE_ENABLED: "true"
+  ALERT_WEBHOOK_KIND: "slack"
+  # Tracing (OTLP/gRPC), e.g. an OpenTelemetry Collector in the cluster.
+  OTEL_ENABLED: "false"
+  OTEL_SERVICE_NAME: "harnis"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4317"
+  # Single sign-on (see README "Single sign-on"). The console's SSO button needs
+  # a public SPA client in your IdP with redirect URI https://<ingress host>/.
+  # AUTH_MODE: "oidc"
+  # OIDC_ISSUER: "https://login.example.com/"
+  # OIDC_AUDIENCE: "harnis-api"
+  # OIDC_ROLES_CLAIM: "groups"
+  # OIDC_ROLE_MAP: '{"harnis-reviewers": "reviewer", "harnis-admins": "admin", "platform-ops": "platform-admin"}'
+  # OIDC_CONSOLE_CLIENT_ID: ""
+  # CONSOLE_ENABLED: "true"
+
+# -----------------------------------------------------------------------------
+# Secrets
+# -----------------------------------------------------------------------------
+secrets:
+  # Use Secrets you manage yourself (External Secrets, Sealed Secrets, Vault,
+  # ...) instead of rendering them from values. When set, the chart renders
+  # no Secret objects.
+  #
+  # existingSecret is loaded into the API with envFrom, so its keys must be
+  # environment variable names: DATABASE_URL, REDIS_URL, JWT_SECRET and any
+  # provider keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY,
+  # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, ALERT_WEBHOOK_URL).
+  existingSecret: ""
+  # Owner credentials, used only by the migration Job and the maintenance
+  # CronJob: keys MIGRATION_DATABASE_URL and APP_DB_PASSWORD. Keep them out of
+  # the API's Secret so a compromised API pod can't act as the table owner.
+  # Defaults to existingSecret if empty.
+  existingMigrationSecret: ""
+
+  # Signing key for API tokens (>= 32 chars). If empty, a random one is
+  # generated on install and kept across upgrades.
+  jwtSecret: ""
+
+  anthropicApiKey: ""
+  openaiApiKey: ""
+  geminiApiKey: ""
+  awsAccessKeyId: ""
+  awsSecretAccessKey: ""
+  alertWebhookUrl: ""
+  # Any other secret settings, by environment variable name.
+  extra: {}
+
+# Postgres 15+ (managed). Harnis connects as the non-owner role `harnis_app`
+# (so Row-Level Security applies); migrations run as the owner and create /
+# update harnis_app with appPassword.
+externalDatabase:
+  host: ""
+  port: 5432
+  database: harnis
+  # libpq sslmode: require / verify-full for managed services.
+  sslmode: require
+  # Password for the harnis_app role (APP_DB_PASSWORD). Required.
+  appPassword: ""
+  # Owner / migration role (must be able to create roles).
+  ownerUser: postgres
+  ownerPassword: ""
+  # Full URLs override the fields above (use these for special characters,
+  # extra parameters or connection poolers).
+  url: ""
+  migrationUrl: ""
+
+# Redis 7+ / Redis Stack (RediSearch enables the vector cache; plain Redis
+# works with a brute-force fallback).
+externalRedis:
+  host: ""
+  port: 6379
+  db: 0
+  password: ""
+  # rediss:// (TLS), required by most managed services.
+  tls: true
+  # Full REDIS_URL, overrides the fields above.
+  url: ""
+
+# -----------------------------------------------------------------------------
+# Session workspaces
+# -----------------------------------------------------------------------------
+# Session files live on the API pods (WORKSPACES_DIR). An approval can be
+# decided on any replica, which then resumes the session and runs the
+# sandbox there, so with more than one replica the workspaces MUST be on
+# shared ReadWriteMany storage (EFS, Filestore, Azure Files, CephFS, NFS).
+# With persistence disabled an emptyDir is used: fine for a single replica,
+# but files are lost when the Pod is replaced.
+workspaces:
+  mountPath: /var/lib/harnis/workspaces
+  emptyDirSizeLimit: 10Gi
+  persistence:
+    enabled: false
+    # Use an existing PVC instead of creating one.
+    existingClaim: ""
+    storageClass: ""
+    accessModes: ["ReadWriteMany"]
+    size: 50Gi
+    annotations: {}
+
+# -----------------------------------------------------------------------------
+# Sandbox Pods (SANDBOX_BACKEND=kubernetes)
+# -----------------------------------------------------------------------------
+sandbox:
+  # Image agent commands run in (Dockerfile.sandbox). It needs sh, sleep,
+  # tar, head and timeout.
+  image:
+    repository: harnis-sandbox
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  # Secret names for pulling the sandbox image. They must exist in the
+  # sandbox namespace (Pods can only use Secrets of their own namespace).
+  imagePullSecrets: []
+
+  namespace:
+    # Namespace where sandbox Pods run. A dedicated namespace is strongly
+    # recommended: the API can only create Pods there (RBAC), and everything
+    # in it is network-isolated.
+    name: harnis-sandbox
+    # Create it with this chart. Set false if it is managed elsewhere.
+    create: true
+    labels:
+      # Pod Security Admission: the sandbox Pod spec satisfies "restricted".
+      pod-security.kubernetes.io/enforce: restricted
+      pod-security.kubernetes.io/enforce-version: latest
+      pod-security.kubernetes.io/warn: restricted
+      pod-security.kubernetes.io/audit: restricted
+    annotations: {}
+
+  # RuntimeClass for sandbox Pods, e.g. "gvisor" (runsc) or "kata". Strongly
+  # recommended for untrusted code: runc shares the node's kernel. The
+  # RuntimeClass and the runtime on the nodes must already exist.
+  runtimeClassName: ""
+
+  # Per-Pod resources (requests = limits). Memory-backed /tmp counts against
+  # the memory limit; the workspace emptyDir against ephemeral-storage.
+  resources:
+    cpu: "1"
+    memory: 512Mi
+    ephemeralStorage: 512Mi
+  workspaceSizeLimit: 256Mi
+  tmpSizeLimit: 64Mi
+
+  # Wall-clock limit per command (seconds), output cap and workspace limits.
+  timeoutSeconds: 30
+  outputLimitBytes: 64000
+  maxWorkspaceBytes: 50000000
+  # Seconds to wait for a sandbox Pod to be Running (image pulls count).
+  podStartTimeoutSeconds: 60
+  # Before each command Harnis checks, inside the Pod, that NetworkPolicy
+  # already blocks it, and refuses to run the command if it doesn't within
+  # timeoutSeconds. Some CNIs (kind's kindnetd, for one) apply policy to a new
+  # Pod a moment after it starts. targets: "auto" (the API server's ClusterIP),
+  # comma-separated host:port addresses the sandbox policy must block, or
+  # "off" only if your CNI enforces policy before a Pod starts.
+  networkProbe:
+    targets: auto
+    timeoutSeconds: 20
+
+  # NOTE on PID limits: Kubernetes has no per-container PID limit in the Pod
+  # spec. Fork bombs are contained by the kubelet's `podPidsLimit` (kubelet
+  # config, e.g. 256 on sandbox nodes), which this chart cannot set.
+
+  # Pin sandboxes to dedicated, tainted nodes (recommended).
+  nodeSelector: {}
+  #  harnis.dev/pool: sandbox
+  tolerations: []
+  #  - key: harnis.dev/sandbox
+  #    operator: Exists
+  #    effect: NoSchedule
+
+  # Extra labels for sandbox Pods. The fixed label harnis/sandbox: "true"
+  # (used by the NetworkPolicy) is always set and cannot be overridden.
+  podLabels: {}
+
+  networkPolicy:
+    # Deny all ingress and egress for sandbox Pods. Needs a CNI that enforces
+    # NetworkPolicy (Calico, Cilium, Antrea, cloud CNIs with policy enabled).
+    enabled: true
+    # Also deny all traffic for every Pod in the sandbox namespace (only when
+    # the namespace is dedicated, i.e. not the release namespace).
+    denyAllInNamespace: true
+
+  # Approved dependency installs (the install_dependencies tool). Install Pods
+  # are the only sandbox Pods with network access: just DNS and the egress
+  # proxy below, which only tunnels HTTPS to the allowlisted registries.
+  # Installed packages count against workspaceSizeLimit / ephemeralStorage,
+  # so raise those if projects have large dependencies.
+  install:
+    enabled: true
+    timeoutSeconds: 300
+    maxDepsBytes: 300000000
+    maxDepsFiles: 60000
+    egress:
+      # Hostnames the proxy tunnels to (HTTPS only). "*.example.com" allows subdomains.
+      allow: "pypi.org,files.pythonhosted.org,registry.npmjs.org"
+      # Chain through a corporate proxy, e.g. http://proxy.corp:3128
+      upstreamProxy: ""
+      # Allow names that resolve to private addresses (an internal package mirror).
+      allowPrivate: false
+      # Where the proxy may connect (port 443, or the upstream proxy's port).
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports: [443]
+    proxy:
+      replicas: 1
+      resources:
+        requests: {cpu: 50m, memory: 64Mi}
+        limits: {cpu: "1", memory: 256Mi}
+    # DNS for install Pods and the proxy (cluster DNS).
+    dns:
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+
+  # Caps total sandbox usage in the sandbox namespace (only when the namespace
+  # is dedicated).
+  resourceQuota:
+    enabled: false
+    hard:
+      pods: "50"
+      limits.cpu: "50"
+      limits.memory: 25Gi
+      limits.ephemeral-storage: 25Gi
+
+  # Deletes sandbox Pods left behind by an API replica that died mid-run.
+  reaper:
+    enabled: true
+    schedule: "*/10 * * * *"
+    olderThanSeconds: 900
+
+# -----------------------------------------------------------------------------
+# Service, Ingress, autoscaling, disruption budget
+# -----------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  # WebSockets (/v1/ws) need long read timeouts on most controllers, e.g. for
+  # ingress-nginx:
+  #   nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+  #   nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+  annotations: {}
+  hosts:
+    - host: harnis.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: harnis-tls
+  #    hosts: [harnis.example.com]
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  # Leave empty to scale on CPU only.
+  targetMemoryUtilizationPercentage: null
+  behavior: {}
+
+podDisruptionBudget:
+  enabled: true
+  # Set exactly one of minAvailable / maxUnavailable.
+  minAvailable: null
+  maxUnavailable: 1
+
+serviceAccount:
+  create: true
+  name: ""
+  # e.g. eks.amazonaws.com/role-arn for Bedrock (IRSA), or
+  # iam.gke.io/gcp-service-account for Vertex AI (Workload Identity).
+  annotations: {}
+
+# -----------------------------------------------------------------------------
+# Prometheus metrics (/metrics on the API port)
+# -----------------------------------------------------------------------------
+metrics:
+  enabled: true
+  # Bearer token scrapers must send. Generated on install if empty and kept
+  # across upgrades (key METRICS_TOKEN in the chart's Secret; with
+  # secrets.existingSecret, add METRICS_TOKEN to your Secret yourself).
+  # The API refuses to serve /metrics in production without a token, because
+  # the ingress routes every path to the API.
+  token: ""
+  # Prometheus Operator: scrape every API Pod with the token.
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+# -----------------------------------------------------------------------------
+# Optional NetworkPolicy for the API Pods
+# -----------------------------------------------------------------------------
+# Off by default because the peers are cluster-specific. When enabled, all
+# egress not listed here is denied.
+apiNetworkPolicy:
+  enabled: false
+  # Who may reach the API port. Empty = any source (only the port is limited).
+  ingressFrom: []
+  #  - namespaceSelector:
+  #      matchLabels:
+  #        kubernetes.io/metadata.name: ingress-nginx
+  dns:
+    # Where cluster DNS runs.
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  # Peers (NetworkPolicyPeer list) for each dependency. Managed services are
+  # outside the cluster, so use ipBlock with their CIDRs.
+  postgres:
+    port: 5432
+    to: []
+    #  - ipBlock: {cidr: 10.20.0.0/24}
+  redis:
+    port: 6379
+    to: []
+  # The Kubernetes API server (needed to create sandbox Pods). Its address is
+  # the endpoint of the `kubernetes` Service in `default`; many CNIs require
+  # an ipBlock for it. If `to` is empty, the chart looks the endpoints up at
+  # install time.
+  kubeApiServer:
+    ports: [443, 6443]
+    to: []
+  # Model providers and other HTTPS APIs. Default: any public address.
+  https:
+    to:
+      - ipBlock:
+          cidr: 0.0.0.0/0
+          except:
+            - 10.0.0.0/8
+            - 172.16.0.0/12
+            - 192.168.0.0/16
+            - 169.254.0.0/16
+  # OTLP collector (gRPC 4317 / HTTP 4318).
+  otlp:
+    ports: [4317, 4318]
+    to: []
+  extraEgress: []
+
+# -----------------------------------------------------------------------------
+# Jobs
+# -----------------------------------------------------------------------------
+# Database migrations run as a Helm hook before install and upgrade.
+migrations:
+  enabled: true
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# Hourly maintenance: ledger partitions and the analytics view.
+maintenance:
+  enabled: true
+  schedule: "17 * * * *"
+  # Optional IANA time zone for the schedule (CronJob timeZone).
+  timeZone: ""
+  activeDeadlineSeconds: 900
+  backoffLimit: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# Shared by the jobs (migrations, maintenance, reaper).
+jobs:
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}

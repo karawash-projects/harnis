@@ -1,0 +1,46 @@
+# Routing and hand-offs between the support and coder agents.
+
+- id: route-to-support
+  category: multi-agent
+  description: A billing question is routed to support.
+  turns:
+    - message: Do you offer refunds on annual plans?
+      expect:
+        status: completed
+        agent: support
+
+- id: route-to-coder
+  category: multi-agent
+  description: A coding request is routed to the coder.
+  turns:
+    - message: Write reverse.py with a function that reverses a string.
+      approvals: deny
+      expect:
+        agent: coder
+        approval_tools: [write_file]
+
+- id: handoff-support-to-coder
+  category: multi-agent
+  description: >
+    A conversation that starts with support moves to the coder when code comes up
+    (re-routed by the harness, or handed off by the support model).
+  turns:
+    - message: Hi, what kinds of services do you offer?
+      expect:
+        agent: support
+    - message: I found a bug in the repo's parser module. Can you look at the code?
+      approvals: deny
+      expect:
+        agent: coder
+
+- id: support-stays-support
+  category: multi-agent
+  description: Re-routing doesn't bounce an ordinary follow-up question away from support.
+  turns:
+    - message: Do you have a student discount?
+      expect:
+        agent: support
+    - message: And is there a discount for non-profits too?
+      expect:
+        agent: support
+        flags_exclude: ["rerouted"]

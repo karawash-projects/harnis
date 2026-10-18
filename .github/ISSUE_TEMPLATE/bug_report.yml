@@ -1,0 +1,99 @@
+name: Bug report
+description: Something in Harnis does not work as documented.
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a problem.
+
+        **Do not use this form for security vulnerabilities** (tenant isolation, authentication, sandbox escape, approval bypass, and so on). See SECURITY.md; please don't post exploit details publicly.
+
+        Remove secrets, tokens, API keys and personal data from anything you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, ideally starting from `python tasks.py up` with the mock provider. An eval case or failing test is ideal.
+      placeholder: |
+        1. python tasks.py up && python tasks.py dev
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Harnis version
+      description: Release version or commit SHA (`pip show harnis`, or the image tag).
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Local development (tasks.py dev)
+        - Docker Compose (tasks.py up-full)
+        - Kubernetes / Helm chart
+        - Other (describe below)
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - API / WebSocket
+        - Authentication (local JWT, OIDC, API keys)
+        - Admin API
+        - Orchestrator / agents / routing
+        - Approvals
+        - Tools / workspace
+        - Sandbox (Docker)
+        - Sandbox (Kubernetes)
+        - Guardrails
+        - LLM providers / failover
+        - Semantic cache
+        - Database / migrations
+        - Telemetry / alerts
+        - CLI
+        - Evals / red team
+        - tasks.py / developer setup
+        - Helm chart
+        - Plugin SDK
+        - Documentation
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, Docker or Kubernetes version, sandbox runtime (runc, runsc, Kata), Postgres and Redis versions.
+      placeholder: "Ubuntu 24.04, Python 3.12, Docker 27, runc, Postgres 16, Redis Stack 7.4"
+  - type: input
+    id: providers
+    attributes:
+      label: LLM providers
+      description: Value of LLM_PROVIDERS and which provider handled the failing request, if relevant.
+      placeholder: "anthropic,openai,mock"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Relevant API logs, error messages, session flags or eval report excerpts. Redact secrets.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This report contains no exploit details for a security vulnerability (see SECURITY.md).
+          required: true

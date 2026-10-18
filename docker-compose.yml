@@ -1,0 +1,108 @@
+# Local stack (same on Windows, macOS and Linux):
+#   python tasks.py up        -> postgres, redis-stack, jaeger, then migrations + demo seed
+#   python tasks.py dev       -> runs the API on your machine (recommended for development)
+#   python tasks.py up-full   -> also runs the API in a container (see the warning on `api`)
+#
+# Host ports come from .env (POSTGRES_PORT, REDIS_PORT, ...). `tasks.py up` picks
+# free ones automatically if something else on your machine already uses them.
+name: harnis
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: harnis
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d harnis"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    # Redis Stack includes RediSearch (vector search for the semantic cache).
+    # Plain redis:7 also works; the cache falls back to brute-force search.
+    image: redis/redis-stack-server:7.4.0-v1
+    ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  jaeger:
+    # Jaeger v2: UI on 16686, OTLP gRPC on 4317, OTLP HTTP on 4318.
+    image: jaegertracing/jaeger:2.1.0
+    ports: ["127.0.0.1:${JAEGER_UI_PORT:-16686}:16686", "127.0.0.1:${OTLP_GRPC_PORT:-4317}:4317", "127.0.0.1:${OTLP_HTTP_PORT:-4318}:4318"]
+
+  migrate:
+    build: .
+    command: ["python", "-m", "harnis.migrate", "--seed", "demo"]
+    environment:
+      MIGRATION_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/harnis
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-harnis_app}
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    # WARNING: local development only. To start sandbox containers the API needs
+    # the Docker socket, and access to the Docker socket is equivalent to root on
+    # the host. In any shared or production environment run sandboxes through a
+    # separate, minimal service (or a Kubernetes job runner with gVisor/Kata).
+    #
+    # Works the same on Linux, macOS and Windows (Docker Desktop): the sandbox
+    # runs in copy mode, so no host paths are shared with the daemon, and the
+    # workspaces live in a named volume rather than a host folder.
+    profiles: ["full"]
+    build: .
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql://harnis_app:${APP_DB_PASSWORD:-harnis_app}@postgres:5432/harnis
+      MIGRATION_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/harnis
+      REDIS_URL: redis://redis:6379/0
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      WORKSPACES_DIR: /app/.workspaces
+      SANDBOX_WORKSPACE_MODE: copy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - workspaces:/app/.workspaces
+    # The API runs as a non-root user; join the socket's group so it can start
+    # sandboxes. `python tasks.py up-full` sets DOCKER_GID (0 on Docker Desktop).
+    group_add: ["${DOCKER_GID:-0}"]
+    ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  keycloak:
+    # LOCAL TESTING ONLY: single sign-on for `python tasks.py sso-up` (docs/keycloak.md).
+    # Dev mode, throwaway in-container database, well-known passwords. Never in production.
+    profiles: ["sso"]
+    image: quay.io/keycloak/keycloak:26.7.5
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin   # local only
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin   # local only
+      KC_HTTP_PORT: "8080"
+      KC_HEALTH_ENABLED: "true"            # /health/ready on the management port 9000
+      # The issuer in tokens and discovery is the URL the browser and the API
+      # (running on the host with `python tasks.py dev`) both use.
+      KC_HOSTNAME: http://127.0.0.1:${KEYCLOAK_PORT:-8080}
+    volumes:
+      - ./deploy/keycloak/harnis-realm.json:/opt/keycloak/data/import/harnis-realm.json:ro
+    ports: ["127.0.0.1:${KEYCLOAK_PORT:-8080}:8080"]
+    healthcheck:
+      # The image has no curl; bash can open a TCP connection itself.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+volumes:
+  pgdata:
+  workspaces:

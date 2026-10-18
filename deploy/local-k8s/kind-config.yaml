@@ -1,0 +1,24 @@
+# kind cluster for trying Harnis on Kubernetes locally (Docker Desktop on
+# Windows/macOS, or Docker Engine on Linux). Used by scripts/k8s_local.py:
+#
+#   python scripts/k8s_local.py up      # create cluster, build + load images, deploy
+#   python scripts/k8s_local.py check   # end-to-end feature check through a port-forward
+#   python scripts/k8s_local.py down    # delete the cluster
+#
+# One node is enough: the API runs with one replica (kind's default storage
+# class, local-path, is ReadWriteOnce only, so workspaces stay on an emptyDir).
+# The API is reached with `kubectl port-forward`, so no extraPortMappings.
+#
+# kind's default CNI (kindnetd) enforces NetworkPolicy, so the chart's
+# deny-all policy for sandbox Pods is really applied here.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: harnis
+nodes:
+  - role: control-plane
+kubeadmConfigPatches:
+  # Kubernetes has no per-container PID limit; Harnis relies on the kubelet's
+  # podPidsLimit on sandbox nodes (docs/kubernetes.md). Mirror that here.
+  - |
+    kind: KubeletConfiguration
+    podPidsLimit: 1024

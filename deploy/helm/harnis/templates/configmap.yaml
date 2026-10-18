@@ -1,0 +1,46 @@
+{{- $s := .Values.sandbox -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "harnis.configMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "api") | nindent 4 }}
+data:
+  {{- /* User settings first; chart-managed keys below win on conflicts. */}}
+  {{- range $key, $value := omit .Values.config "ENV" "WORKSPACES_DIR" }}
+  {{- if not (hasPrefix "SANDBOX_" $key) }}
+  {{ $key }}: {{ toString $value | quote }}
+  {{- end }}
+  {{- end }}
+  ENV: "production"
+  METRICS_ENABLED: {{ .Values.metrics.enabled | quote }}
+  WORKSPACES_DIR: {{ .Values.workspaces.mountPath | quote }}
+  # Sandbox: one hardened Pod per command in the sandbox namespace.
+  SANDBOX_BACKEND: "kubernetes"
+  SANDBOX_IMAGE: {{ include "harnis.sandboxImage" . | quote }}
+  SANDBOX_TIMEOUT_SECONDS: {{ $s.timeoutSeconds | quote }}
+  SANDBOX_OUTPUT_LIMIT_BYTES: {{ $s.outputLimitBytes | int64 | quote }}
+  SANDBOX_MAX_WORKSPACE_BYTES: {{ $s.maxWorkspaceBytes | int64 | quote }}
+  SANDBOX_K8S_NAMESPACE: {{ include "harnis.sandboxNamespace" . | quote }}
+  SANDBOX_K8S_RUNTIME_CLASS: {{ $s.runtimeClassName | quote }}
+  SANDBOX_K8S_CPU: {{ $s.resources.cpu | quote }}
+  SANDBOX_K8S_MEMORY: {{ $s.resources.memory | quote }}
+  SANDBOX_K8S_EPHEMERAL_STORAGE: {{ $s.resources.ephemeralStorage | quote }}
+  SANDBOX_K8S_WORKSPACE_SIZE: {{ $s.workspaceSizeLimit | quote }}
+  SANDBOX_K8S_TMP_SIZE: {{ $s.tmpSizeLimit | quote }}
+  SANDBOX_K8S_IMAGE_PULL_POLICY: {{ $s.image.pullPolicy | quote }}
+  SANDBOX_K8S_IMAGE_PULL_SECRETS: {{ join "," $s.imagePullSecrets | quote }}
+  SANDBOX_K8S_NODE_SELECTOR: {{ $s.nodeSelector | default dict | toJson | quote }}
+  SANDBOX_K8S_TOLERATIONS: {{ $s.tolerations | default list | toJson | quote }}
+  SANDBOX_K8S_LABELS: {{ $s.podLabels | default dict | toJson | quote }}
+  SANDBOX_K8S_POD_START_TIMEOUT: {{ $s.podStartTimeoutSeconds | quote }}
+  SANDBOX_K8S_NETWORK_PROBE: {{ $s.networkProbe.targets | default "auto" | quote }}
+  SANDBOX_K8S_NETWORK_PROBE_TIMEOUT: {{ $s.networkProbe.timeoutSeconds | quote }}
+  SANDBOX_INSTALL_ENABLED: {{ $s.install.enabled | quote }}
+  SANDBOX_INSTALL_TIMEOUT_SECONDS: {{ $s.install.timeoutSeconds | quote }}
+  SANDBOX_DEPS_MAX_BYTES: {{ $s.install.maxDepsBytes | int64 | quote }}
+  SANDBOX_DEPS_MAX_FILES: {{ $s.install.maxDepsFiles | int64 | quote }}
+  {{- if $s.install.enabled }}
+  SANDBOX_EGRESS_PROXY_URL: {{ printf "http://%s.%s.svc:3128" (include "harnis.componentName" (list . "egress-proxy")) (include "harnis.sandboxNamespace" .) | quote }}
+  {{- end }}

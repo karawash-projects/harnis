@@ -1,0 +1,163 @@
+{{- if .Values.sandbox.install.enabled }}
+{{- $i := .Values.sandbox.install }}
+{{- $name := include "harnis.componentName" (list . "egress-proxy") }}
+{{- $ns := include "harnis.sandboxNamespace" . }}
+# Allowlisting HTTPS proxy for approved dependency installs (harnis/egress_proxy.py,
+# shipped in the sandbox image). Install Pods can reach nothing else.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "egress-proxy") | nindent 4 }}
+spec:
+  replicas: {{ $i.proxy.replicas }}
+  selector:
+    matchLabels:
+      {{- include "harnis.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: egress-proxy
+  template:
+    metadata:
+      labels:
+        {{- include "harnis.componentLabels" (list . "egress-proxy") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.sandbox.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: proxy
+          image: {{ include "harnis.sandboxImage" . | quote }}
+          imagePullPolicy: {{ .Values.sandbox.image.pullPolicy }}
+          command: ["python", "/opt/harnis/egress_proxy.py"]
+          env:
+            - name: EGRESS_LISTEN
+              value: "0.0.0.0:3128"
+            - name: EGRESS_ALLOW
+              value: {{ $i.egress.allow | quote }}
+            - name: EGRESS_UPSTREAM_PROXY
+              value: {{ $i.egress.upstreamProxy | quote }}
+            - name: EGRESS_ALLOW_PRIVATE
+              value: {{ ternary "true" "" $i.egress.allowPrivate | quote }}
+          ports:
+            - name: proxy
+              containerPort: 3128
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: proxy
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: proxy
+            periodSeconds: 20
+          resources:
+            {{- toYaml $i.proxy.resources | nindent 12 }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            privileged: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "egress-proxy") | nindent 4 }}
+spec:
+  selector:
+    {{- include "harnis.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: egress-proxy
+  ports:
+    - name: proxy
+      port: 3128
+      targetPort: proxy
+      protocol: TCP
+{{- if .Values.sandbox.networkPolicy.enabled }}
+---
+# Install Pods (harnis/egress: registry) may reach the proxy and nothing else,
+# not even DNS (the API passes them the proxy's IP address).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "harnis.componentName" (list . "sandbox-install-egress") }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "sandbox") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      harnis/sandbox: "true"
+      harnis/egress: registry
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "harnis.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: egress-proxy
+      ports:
+        - port: 3128
+          protocol: TCP
+---
+# The proxy: reachable only from install Pods; may reach DNS and the allowed
+# destinations (public HTTPS by default).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "egress-proxy") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "harnis.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: egress-proxy
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              harnis/sandbox: "true"
+              harnis/egress: registry
+      ports:
+        - port: 3128
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            {{- toYaml $i.dns.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml $i.dns.podSelector | nindent 12 }}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        {{- toYaml $i.egress.to | nindent 8 }}
+      ports:
+        {{- range $i.egress.ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+{{- end }}
+{{- end }}

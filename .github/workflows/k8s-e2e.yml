@@ -1,0 +1,76 @@
+# End-to-end test of the Helm chart on a kind cluster: builds both images,
+# loads them into kind, deploys Postgres + Redis + Harnis with
+# deploy/local-k8s/values-kind.yaml (mock model), and runs the full
+# scripts/harnis_check.py feature check against it (sandbox commands run as
+# Pods). The same commands work locally: python scripts/k8s_local.py up / check.
+name: k8s-e2e
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "harnis/**"
+      - "scripts/**"
+      - "Dockerfile"
+      - "Dockerfile.sandbox"
+      - "pyproject.toml"
+      - ".github/workflows/k8s-e2e.yml"
+  pull_request:
+    paths:
+      - "deploy/**"
+      - "harnis/**"
+      - "scripts/**"
+      - "Dockerfile"
+      - "Dockerfile.sandbox"
+      - "pyproject.toml"
+      - ".github/workflows/k8s-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: k8s-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: azure/setup-helm@v4
+      # Installs kind and kubectl only; scripts/k8s_local.py creates the
+      # cluster from deploy/local-k8s/kind-config.yaml, as it does locally.
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Lint and render the chart with the kind values
+        run: |
+          helm lint --strict deploy/helm/harnis -f deploy/local-k8s/values-kind.yaml
+          helm template harnis deploy/helm/harnis -n harnis -f deploy/local-k8s/values-kind.yaml > /dev/null
+
+      - name: Cluster, images, dependencies and release
+        run: python scripts/k8s_local.py up
+
+      - name: End-to-end feature check
+        run: python scripts/k8s_local.py check --report harnis-check-kind.json
+
+      - name: Upload the feature check report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harnis-check-kind
+          path: harnis-check-kind.json
+          if-no-files-found: ignore
+
+      - name: Cluster diagnostics
+        if: failure()
+        run: python scripts/k8s_local.py debug
+
+      - name: Delete the cluster
+        if: always()
+        run: python scripts/k8s_local.py down

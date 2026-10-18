@@ -1,0 +1,64 @@
+{{- if .Values.sandbox.reaper.enabled }}
+# Every run deletes its own sandbox Pod; this catches Pods left behind when
+# an API replica is killed mid-run (they are already stopped by
+# activeDeadlineSeconds, but the objects remain). Uses the API's service
+# account (list/delete Pods in the sandbox namespace) and no database access.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "harnis.componentName" (list . "sandbox-reaper") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "sandbox-reaper") | nindent 4 }}
+spec:
+  schedule: {{ .Values.sandbox.reaper.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "harnis.componentLabels" (list . "sandbox-reaper") | nindent 12 }}
+          {{- with .Values.jobs.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "harnis.serviceAccountName" . }}
+          automountServiceAccountToken: true
+          enableServiceLinks: false
+          {{- include "harnis.jobPodSecurity" . | nindent 10 }}
+          containers:
+            - name: reaper
+              image: {{ include "harnis.image" . | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python
+                - -m
+                - harnis.k8s_sandbox
+                - reap
+                - --older-than
+                - {{ .Values.sandbox.reaper.olderThanSeconds | quote }}
+              env:
+                - name: HOME
+                  value: /tmp
+                - name: SANDBOX_K8S_NAMESPACE
+                  value: {{ include "harnis.sandboxNamespace" . | quote }}
+              securityContext:
+                {{- toYaml .Values.api.securityContext | nindent 16 }}
+              resources:
+                requests:
+                  cpu: 20m
+                  memory: 96Mi
+                limits:
+                  memory: 192Mi
+              {{- include "harnis.jobVolumeMounts" . | nindent 14 }}
+          {{- include "harnis.jobVolumes" . | nindent 10 }}
+{{- end }}

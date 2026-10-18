@@ -1,0 +1,151 @@
+{{- $api := .Values.api -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "harnis.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "api") | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ $api.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "harnis.apiSelectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        {{- include "harnis.componentLabels" (list . "api") | nindent 8 }}
+        {{- with $api.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # Roll the Pods when settings change (envFrom is read only at start).
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if not .Values.secrets.existingSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with $api.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "harnis.serviceAccountName" . }}
+      # The API talks to the Kubernetes API to run sandbox Pods.
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ $api.terminationGracePeriodSeconds }}
+      {{- with $api.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $api.podSecurityContext | nindent 8 }}
+      containers:
+        - name: api
+          image: {{ include "harnis.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with $api.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $api.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $api.containerPort }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "harnis.configMapName" . }}
+            - secretRef:
+                name: {{ include "harnis.secretName" . }}
+            {{- with $api.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            # Libraries that cache under $HOME need a writable directory.
+            - name: HOME
+              value: /tmp
+            {{- with $api.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          securityContext:
+            {{- toYaml $api.securityContext | nindent 12 }}
+          {{- with $api.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $api.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $api.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if gt (int $api.preStopSleepSeconds) 0 }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", {{ $api.preStopSleepSeconds | quote }}]
+          {{- end }}
+          resources:
+            {{- toYaml $api.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: workspaces
+              mountPath: {{ .Values.workspaces.mountPath }}
+            {{- with $api.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ $api.tmpSizeLimit }}
+        - name: workspaces
+          {{- if .Values.workspaces.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ default (include "harnis.componentName" (list . "workspaces")) .Values.workspaces.persistence.existingClaim }}
+          {{- else }}
+          emptyDir:
+            sizeLimit: {{ .Values.workspaces.emptyDirSizeLimit }}
+          {{- end }}
+        {{- with $api.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $api.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- range . }}
+        {{- $c := deepCopy . }}
+        {{- if not (hasKey $c "labelSelector") }}
+        {{- $_ := set $c "labelSelector" (dict "matchLabels" (include "harnis.apiSelectorLabels" $ | fromYaml)) }}
+        {{- end }}
+        - {{ toYaml $c | indent 10 | trim }}
+        {{- end }}
+      {{- end }}
+      {{- with $api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

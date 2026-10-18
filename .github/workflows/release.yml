@@ -1,0 +1,271 @@
+name: release
+
+# Runs when a version tag is pushed: git tag -a v1.2.3 -m v1.2.3 && git push origin v1.2.3
+# One-time setup (see CONTRIBUTING.md, Release process):
+#   * PyPI: add a trusted publisher for this repository, workflow `release.yml`,
+#     environment `pypi` (https://docs.pypi.org/trusted-publishers/).
+#   * GitHub: create the `pypi` environment (Settings > Environments), ideally with
+#     required reviewers, and allow GitHub Actions to write packages.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Gate: the tag must match the package version, and the unit tests must pass.
+  # ---------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      owner: ${{ steps.version.outputs.owner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Check the tag matches pyproject.toml
+        id: version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag v$tag does not match pyproject.toml version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* || "$version" =~ (a|b|rc)[0-9]+$ ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Registry paths must be lowercase; the owner name may not be.
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - name: Check CHANGELOG.md has an entry for this version
+        shell: bash
+        run: grep -q "^## \[${{ steps.version.outputs.version }}\]" CHANGELOG.md
+      - run: python tasks.py install
+      - run: python tasks.py test unit
+
+  # ---------------------------------------------------------------------------
+  # Python package
+  # ---------------------------------------------------------------------------
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/harnis/
+    permissions:
+      id-token: write   # trusted publishing (OIDC); no API token is stored
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # ---------------------------------------------------------------------------
+  # Container images: multi-arch, SBOM + provenance attestations, cosign keyless
+  # ---------------------------------------------------------------------------
+  images:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # push to GHCR
+      id-token: write   # cosign keyless signing (Sigstore OIDC)
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - image: harnis
+            dockerfile: Dockerfile
+            description: Harnis API server
+          - image: harnis-sandbox
+            dockerfile: Dockerfile.sandbox
+            description: Harnis sandbox image for agent commands
+    env:
+      IMAGE: ghcr.io/${{ needs.test.outputs.owner }}/${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ needs.test.outputs.prerelease == 'false' }}
+            type=semver,pattern={{major}},enable=${{ needs.test.outputs.prerelease == 'false' }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.image }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.licenses=Apache-2.0
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign the image (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+      - name: Verification command
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### ${IMAGE}"
+            echo '```'
+            echo "${IMAGE}@${DIGEST}"
+            echo "cosign verify ${IMAGE}@${DIGEST} \\"
+            echo "  --certificate-identity-regexp '^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Helm chart as an OCI artifact
+  # ---------------------------------------------------------------------------
+  helm:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # cosign keyless signing of the chart
+    env:
+      CHART_DIR: deploy/helm/harnis
+      REGISTRY: oci://ghcr.io/${{ needs.test.outputs.owner }}/charts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Check the chart's appVersion matches the release
+        shell: bash
+        env:
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          app=$(sed -n 's/^appVersion:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$CHART_DIR/Chart.yaml")
+          if [ "$app" != "$VERSION" ]; then
+            echo "::error::$CHART_DIR/Chart.yaml appVersion is '$app', expected '$VERSION'"
+            exit 1
+          fi
+      - name: Lint and package
+        run: |
+          helm lint "$CHART_DIR"
+          helm package "$CHART_DIR" --destination chart-dist
+      - name: Push to GHCR
+        id: push
+        shell: bash
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+          chart=$(ls chart-dist/*.tgz)
+          helm push "$chart" "$REGISTRY" 2>&1 | tee push.log
+          digest=$(sed -n 's/^Digest: *//p' push.log)
+          ref=$(sed -n 's/^Pushed: *//p' push.log)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "ref=${ref%%:*}" >> "$GITHUB_OUTPUT"
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign the chart (keyless)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | cosign login ghcr.io --username "${{ github.actor }}" --password-stdin
+          cosign sign --yes "${{ steps.push.outputs.ref }}@${{ steps.push.outputs.digest }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chart
+          path: chart-dist/*.tgz
+
+  # ---------------------------------------------------------------------------
+  # GitHub Release with the CHANGELOG section as notes
+  # ---------------------------------------------------------------------------
+  github-release:
+    needs: [test, pypi, images, helm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+      - name: Extract release notes from CHANGELOG.md
+        shell: bash
+        env:
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found && /^\[[^]]+\]: / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "::error::no CHANGELOG.md section for $VERSION"; exit 1; fi
+          owner="${{ needs.test.outputs.owner }}"
+          {
+            echo
+            echo "### Artifacts"
+            echo
+            echo "- PyPI: \`pip install harnis==$VERSION\`"
+            echo "- Images: \`ghcr.io/$owner/harnis:$VERSION\`, \`ghcr.io/$owner/harnis-sandbox:$VERSION\` (linux/amd64, linux/arm64; signed with cosign, SBOM and provenance attached)"
+            echo "- Helm chart: \`oci://ghcr.io/$owner/charts/harnis\`"
+          } >> notes.md
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.test.outputs.version }}
+          PRERELEASE: ${{ needs.test.outputs.prerelease }}
+        run: |
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" --title "Harnis $VERSION" --notes-file notes.md \
+            --verify-tag "${flags[@]}" artifacts/dist/* artifacts/chart/*

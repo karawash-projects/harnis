@@ -1,0 +1,15 @@
+{{- if and .Values.sandbox.namespace.create (include "harnis.sandboxNamespaceDedicated" .) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "harnis.sandboxNamespace" . }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "sandbox") | nindent 4 }}
+    {{- with .Values.sandbox.namespace.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.sandbox.namespace.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

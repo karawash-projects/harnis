@@ -1,0 +1,29 @@
+{{- $p := .Values.workspaces.persistence }}
+{{- if and $p.enabled (not $p.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "harnis.componentName" (list . "workspaces") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "api") | nindent 4 }}
+  annotations:
+    # Session files must survive `helm uninstall` by accident.
+    helm.sh/resource-policy: keep
+    {{- with $p.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  accessModes:
+    {{- toYaml $p.accessModes | nindent 4 }}
+  {{- if $p.storageClass }}
+  {{- if eq "-" $p.storageClass }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ $p.storageClass | quote }}
+  {{- end }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $p.size }}
+{{- end }}
