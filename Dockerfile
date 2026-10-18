@@ -1,6 +1,6 @@
 # API image. Dependencies go into a virtualenv at /opt/venv (not /root/.local),
 # so the non-root runtime user can actually import them.
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN python -m venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
@@ -9,7 +9,7 @@ COPY pyproject.toml README.md LICENSE NOTICE ./
 COPY harnis ./harnis
 RUN pip install ".[k8s]"
 
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app
 COPY --from=builder /opt/venv /opt/venv

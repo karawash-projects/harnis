@@ -2,7 +2,7 @@
 # Python + pytest, no compilers, no network tools, non-root by default.
 # (The harness additionally forces a non-root uid, read-only root, no network,
 #  no capabilities and resource limits at run time.)
-FROM python:3.12-slim
+FROM python:3.14-slim
 # WITH_NODE=true adds Node.js and npm, for projects that install npm packages
 # with install_dependencies: docker build -f Dockerfile.sandbox --build-arg WITH_NODE=true .
 ARG WITH_NODE=false
