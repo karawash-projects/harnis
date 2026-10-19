@@ -12,7 +12,7 @@ It ships with three workloads on one engine:
 
 Bring your own models (Anthropic, OpenAI, Google Gemini, Amazon Nova on Bedrock, or anything with an OpenAI-compatible API, such as vLLM or Ollama), your own identity provider (any OIDC IdP), and your own tools and agents (plugins). Run it with Docker Compose on a laptop or with the Helm chart on Kubernetes.
 
-Licensed under [Apache 2.0](LICENSE) and provided **as is**, without warranty or support: you are free to use, change and extend it, and you are responsible for how you run it (see [Use at your own risk](#use-at-your-own-risk)).
+Licensed under [Apache 2.0](https://github.com/karawash-projects/harnis/blob/main/LICENSE) and provided **as is**, without warranty or support: you are free to use, change and extend it, and you are responsible for how you run it (see [Use at your own risk](https://github.com/karawash-projects/harnis#use-at-your-own-risk)).
 
 ## Why Harnis
 
@@ -46,7 +46,7 @@ Licensed under [Apache 2.0](LICENSE) and provided **as is**, without warranty or
                      analytics            breaker, cache (+ offline mock)          read-only, non-root
 ```
 
-Session state lives in Postgres and Redis, so a session suspended for approval on one replica resumes on whichever replica receives the decision. Session files live in the workspaces directory, which must be shared storage when you run more than one replica; see [Scaling](docs/kubernetes.md#scaling). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
+Session state lives in Postgres and Redis, so a session suspended for approval on one replica resumes on whichever replica receives the decision. Session files live in the workspaces directory, which must be shared storage when you run more than one replica; see [Scaling](https://github.com/karawash-projects/harnis/blob/main/docs/kubernetes.md#scaling). See [docs/ARCHITECTURE.md](https://github.com/karawash-projects/harnis/blob/main/docs/ARCHITECTURE.md) for the full design.
 
 ## Quick start (about 5 minutes, no API keys needed)
 
@@ -63,7 +63,7 @@ python tasks.py dev              # API on http://127.0.0.1:8000
 
 Open **http://127.0.0.1:8000** and click **Continue as local developer** (you're the admin of the demo tenant `acme`). The console has conversations with inline approvals and diffs, an approvals queue, usage and analytics, agents and their prompts, API keys and the audit log; a platform admin also sees tenants. Traces are in Jaeger at **http://127.0.0.1:16686**.
 
-Check that everything works with `python tasks.py check` (see [Checking a deployment](#checking-a-deployment)), and `python tasks.py status` shows which services are up.
+Check that everything works with `python tasks.py check` (see [Checking a deployment](https://github.com/karawash-projects/harnis#checking-a-deployment)), and `python tasks.py status` shows which services are up.
 
 Try the coding agent on a scratch folder in a second terminal:
 
@@ -94,7 +94,7 @@ The mock provider follows a small, deterministic script so every path can be exe
 |---|---|---|---|
 | Docker | Docker Desktop (WSL 2 backend) | Docker Desktop, Colima or OrbStack | Docker Engine |
 | Sandbox workspace mode | `copy` (default) | `copy` (default) | `copy` (default) or `bind` |
-| gVisor (`SANDBOX_RUNTIME=runsc`) | inside WSL2 with Docker Engine ([docs/gvisor.md](docs/gvisor.md)) | not available | supported |
+| gVisor (`SANDBOX_RUNTIME=runsc`) | inside WSL2 with Docker Engine ([docs/gvisor.md](https://github.com/karawash-projects/harnis/blob/main/docs/gvisor.md)) | not available | supported |
 
 * **Workspaces** are streamed into the sandbox through the Docker API and validated on the way back (symlinks, hard links, devices and paths outside the workspace are dropped), so it behaves identically everywhere, including remote daemons. On Linux, `SANDBOX_WORKSPACE_MODE=bind` bind-mounts instead.
 * **Paths** are POSIX-style and portable: `..`, absolute and drive paths, and names Windows can't store are rejected on every OS. Files are read and written as UTF-8 bytes, so diffs and approval hashes match across platforms.
@@ -111,7 +111,7 @@ The mock provider follows a small, deterministic script so every path can be exe
 | Google Gemini | `gemini` | `GEMINI_API_KEY`, or Vertex AI with `GEMINI_USE_VERTEXAI=true` | `gemini-3.8-flash` / `gemini-3.5-flash-lite` |
 | Amazon Nova (Bedrock) | `nova` | `AWS_REGION` plus AWS credentials (keys, `AWS_PROFILE`/SSO, or an IAM role) | `us.amazon.nova-2-lite-v1:0` / `us.amazon.nova-micro-v1:0` |
 | Self-hosted / gateway | `openai_compatible` | `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_MODEL` (vLLM, Ollama, LM Studio, LiteLLM) | yours |
-| Your own | plugin | see [docs/plugins.md](docs/plugins.md) | yours |
+| Your own | plugin | see [docs/plugins.md](https://github.com/karawash-projects/harnis/blob/main/docs/plugins.md) | yours |
 
 `LLM_PROVIDERS` is the failover order. Providers without credentials are skipped and the API logs the resulting chain at startup; `mock` is refused when `ENV=production`. Model names change often, so set `*_MODEL` / `*_FAST_MODEL` to what your account offers.
 
@@ -158,7 +158,7 @@ python tasks.py sso-check   # feature check with Keycloak-issued tokens
 python tasks.py sso-down    # back to local auth
 ```
 
-The test users, passwords and password-grant client are for local testing only. See [docs/keycloak.md](docs/keycloak.md), which also shows how the realm maps to the settings above so you can mirror it in your own IdP.
+The test users, passwords and password-grant client are for local testing only. See [docs/keycloak.md](https://github.com/karawash-projects/harnis/blob/main/docs/keycloak.md), which also shows how the realm maps to the settings above so you can mirror it in your own IdP.
 
 ### 3. Tenants
 
@@ -203,7 +203,7 @@ def register(registry):
                                  tools=["lookup_order", "handoff", "escalate_to_human"]))
 ```
 
-Load it with `PLUGINS=mycompany_harnis`. Mark anything with side effects `risk="high"` and a reviewer approves each call. The [ticketing example](examples/plugins/harnis-plugin-tickets) is a complete, packaged plugin; [docs/plugins.md](docs/plugins.md) covers tools, agents, providers and testing.
+Load it with `PLUGINS=mycompany_harnis`. Mark anything with side effects `risk="high"` and a reviewer approves each call. The [ticketing example](https://github.com/karawash-projects/harnis/tree/main/examples/plugins/harnis-plugin-tickets) is a complete, packaged plugin; [docs/plugins.md](https://github.com/karawash-projects/harnis/blob/main/docs/plugins.md) covers tools, agents, providers and testing.
 
 ### 6. Kubernetes
 
@@ -215,11 +215,11 @@ The chart runs the API as a Deployment (with optional HPA, PDB and Ingress), mig
 
 Try it on your machine first with a local [kind](https://kind.sigs.k8s.io/) cluster: `python tasks.py k8s-up`, `python tasks.py k8s-check` (the full feature check against the cluster), `python tasks.py k8s-down`.
 
-Read [docs/kubernetes.md](docs/kubernetes.md) before installing: it covers images, sandbox nodes, gVisor, Postgres and Redis, secrets, values and troubleshooting. The chart is linted, schema-validated and exercised on kind in CI, but has not been run on a production cluster, so test it in your own environment first. For running several API replicas, see [Scaling](docs/kubernetes.md#scaling).
+Read [docs/kubernetes.md](https://github.com/karawash-projects/harnis/blob/main/docs/kubernetes.md) before installing: it covers images, sandbox nodes, gVisor, Postgres and Redis, secrets, values and troubleshooting. The chart is linted, schema-validated and exercised on kind in CI, but has not been run on a production cluster, so test it in your own environment first. For running several API replicas, see [Scaling](https://github.com/karawash-projects/harnis/blob/main/docs/kubernetes.md#scaling).
 
 ### 7. Operating it
 
-[docs/operations.md](docs/operations.md) covers running Harnis in production: dependency installs and the egress proxy, model prices, data retention and user data requests (export and erasure), deleting tenants, backups and restore drills, upgrades, metrics and alerts, load testing, and a go-live checklist.
+[docs/operations.md](https://github.com/karawash-projects/harnis/blob/main/docs/operations.md) covers running Harnis in production: dependency installs and the egress proxy, model prices, data retention and user data requests (export and erasure), deleting tenants, backups and restore drills, upgrades, metrics and alerts, load testing, and a go-live checklist.
 
 ## API
 
@@ -265,8 +265,8 @@ With the JWT secret (local auth) it creates its own tenants and tests everything
 
 ## Testing gVisor and Kubernetes locally
 
-* **gVisor** (kernel isolation for untrusted code): on Linux, or on Windows inside WSL2 with Docker Engine (Docker Desktop can't run `runsc`), install runsc and run `python tasks.py gvisor-check`. It verifies the runtime and runs the sandbox tests under gVisor. See [docs/gvisor.md](docs/gvisor.md). CI runs the same check on every push (`.github/workflows/gvisor.yml`).
-* **Kubernetes**: with Docker Desktop (or Docker Engine), kind, kubectl and helm, run `python tasks.py k8s-up`, then `python tasks.py k8s-check`, then `python tasks.py k8s-down`. This deploys the Helm chart with throwaway Postgres/Redis and runs the full feature check, with sandbox commands running as Pods. See [docs/kubernetes.md](docs/kubernetes.md#try-it-locally-with-kind). CI runs it in `.github/workflows/k8s-e2e.yml`.
+* **gVisor** (kernel isolation for untrusted code): on Linux, or on Windows inside WSL2 with Docker Engine (Docker Desktop can't run `runsc`), install runsc and run `python tasks.py gvisor-check`. It verifies the runtime and runs the sandbox tests under gVisor. See [docs/gvisor.md](https://github.com/karawash-projects/harnis/blob/main/docs/gvisor.md). CI runs the same check on every push (`.github/workflows/gvisor.yml`).
+* **Kubernetes**: with Docker Desktop (or Docker Engine), kind, kubectl and helm, run `python tasks.py k8s-up`, then `python tasks.py k8s-check`, then `python tasks.py k8s-down`. This deploys the Helm chart with throwaway Postgres/Redis and runs the full feature check, with sandbox commands running as Pods. See [docs/kubernetes.md](https://github.com/karawash-projects/harnis/blob/main/docs/kubernetes.md#try-it-locally-with-kind). CI runs it in `.github/workflows/k8s-e2e.yml`.
 
 ## Tests and evals
 
@@ -280,7 +280,7 @@ python tasks.py test browser       # the web console in Chromium, incl. SSO (pip
 python tasks.py eval -- --providers mock,anthropic,gemini,nova --repeat 3
 ```
 
-The eval suite (`evals/`) drives the live API like a user and a reviewer would, across support, coding, approvals, guardrails, multi-agent and robustness cases, and writes an HTML and JSON report. Each provider runs in its own tenant restricted to that provider, so results are comparable. Add cases for your own agents; see [evals/README.md](evals/README.md).
+The eval suite (`evals/`) drives the live API like a user and a reviewer would, across support, coding, approvals, guardrails, multi-agent and robustness cases, and writes an HTML and JSON report. Each provider runs in its own tenant restricted to that provider, so results are comparable. Add cases for your own agents; see [evals/README.md](https://github.com/karawash-projects/harnis/blob/main/evals/README.md).
 
 ## Security model: read before deploying
 
@@ -293,7 +293,7 @@ The eval suite (`evals/`) drives the live API like a user and a reviewer would, 
 * **Data leaving your boundary:** failover can send a tenant's prompts to another provider. Restrict it with `allowed_providers`, and check your privacy obligations (e.g. GDPR) before sending personal data to providers in other jurisdictions.
 * With `AUTH_MODE=local`, use a long random `JWT_SECRET` and short-lived tokens. Don't log query strings (the WebSocket token travels there because browsers can't set headers on upgrades).
 
-See [SECURITY.md](SECURITY.md) for the security model and how to share a vulnerability (there is no response commitment).
+See [SECURITY.md](https://github.com/karawash-projects/harnis/blob/main/SECURITY.md) for the security model and how to share a vulnerability (there is no response commitment).
 
 ## Project layout
 
@@ -329,7 +329,7 @@ tests/  redteam/  evals/
 
 ## Contributing
 
-Contributions are welcome (bug reports, docs, plugins, providers and fixes), with no commitment to review or merge them. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and the sign-off (DCO) we ask for, and follow the [Code of Conduct](CODE_OF_CONDUCT.md). How decisions are made is in [GOVERNANCE.md](GOVERNANCE.md); what changed is in [CHANGELOG.md](CHANGELOG.md).
+Contributions are welcome (bug reports, docs, plugins, providers and fixes), with no commitment to review or merge them. Read [CONTRIBUTING.md](https://github.com/karawash-projects/harnis/blob/main/CONTRIBUTING.md) for the development setup and the sign-off (DCO) we ask for, and follow the [Code of Conduct](https://github.com/karawash-projects/harnis/blob/main/CODE_OF_CONDUCT.md). How decisions are made is in [GOVERNANCE.md](https://github.com/karawash-projects/harnis/blob/main/GOVERNANCE.md); what changed is in [CHANGELOG.md](https://github.com/karawash-projects/harnis/blob/main/CHANGELOG.md).
 
 ## Use at your own risk
 
@@ -341,4 +341,4 @@ Harnis is provided **"as is", without warranties or conditions of any kind**, an
 
 ## License
 
-Copyright 2026 Ahmad Karawash. Licensed under the Apache License, Version 2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Copyright 2026 Ahmad Karawash. Licensed under the Apache License, Version 2.0; see [LICENSE](https://github.com/karawash-projects/harnis/blob/main/LICENSE) and [NOTICE](https://github.com/karawash-projects/harnis/blob/main/NOTICE).

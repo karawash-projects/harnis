@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "harnis"
-version = "1.0.0"
+version = "1.0.1"
 description = "Harnis: an open-source, multi-tenant agent harness for companies: coding agents, multi-agent workflows and stateful apps with approvals, sandboxing and tenant isolation."
 readme = "README.md"
 requires-python = ">=3.11"
