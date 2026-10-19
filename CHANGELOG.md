@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-19
+
+### Fixed
+- Links in the README (license, notice, docs and other project files) are absolute, so they work on the PyPI project page as well as on GitHub.
+- The release workflow downloads only the package and chart artifacts; downloading every artifact failed on Docker build records and stopped the GitHub Release from being created.
+
 ## [1.0.0] - 2026-10-17
 
 First public release, under the Apache License 2.0.
