@@ -55,6 +55,7 @@
     return d.toLocaleDateString();
   }
   const money = (v) => "$" + Number(v || 0).toFixed(4);
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
   const num = (v) => Number(v || 0).toLocaleString();
 
   function jwtClaims(token) {
@@ -479,7 +480,7 @@
         h("span", { class: "mono small", title: v.session_id, text: v.session_id.slice(0, 8) }),
         statusPill(v.status), v.agent ? h("span", { class: "pill", text: "agent: " + v.agent }) : null,
         h("span", { class: "spacer" }),
-        t.steps != null ? h("span", { class: "muted small", text: `${t.steps} steps · ${t.tool_calls || 0} tools · ${money(t.cost_usd)}${t.cache_hit ? " · cached" : ""}` }) : null,
+        t.steps != null ? h("span", { class: "muted small", text: `${plural(t.steps, "step")} · ${plural(t.tool_calls || 0, "tool call")} · ${money(t.cost_usd)}${t.cache_hit ? " · cached" : ""}` }) : null,
         h("button", { class: "btn ghost sm", id: "filesBtn", onclick: toggleFiles }, "Files"));
       const nodes = [];
       for (const m of v.messages) {
