@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 - The live event stream (`/v1/ws`) re-checks its credential every `WS_REVALIDATE_SECONDS` (default 60) and closes once the token has expired, the API key was revoked (4401) or the tenant was disabled (4403). Before, it checked only when the connection opened and kept streaming session and approval events afterwards. A disabled tenant is also refused at connect, and the checks no longer run on the event loop.
+- Console: when the server closes the event stream because the sign-in expired or was revoked, the console signs out and asks the user to sign in again; when the organization was disabled, it says so. Other disconnects are retried with a growing delay (3 to 60 seconds) after confirming the sign-in, instead of every 3 seconds indefinitely.
 
 ### Added
 - Documentation site built with MkDocs (`python tasks.py docs`) and published to GitHub Pages by a new `docs` workflow; the build fails on broken links.
