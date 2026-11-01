@@ -608,7 +608,9 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
             # Same rules as an HTTP request: a valid credential and an active
             # tenant. Runs in a worker thread (API keys and OIDC can do I/O).
             p = app.state.auth.authenticate(token)
-            if not store.tenant_active(p.tenant_id):
+            # Platform admins hold no role inside a tenant (their pseudo-tenant
+            # has no row), so only tenant roles are tied to an active tenant.
+            if p.roles & TENANT_ROLES and not store.tenant_active(p.tenant_id):
                 raise HTTPException(403, "tenant is disabled")
             return p
 

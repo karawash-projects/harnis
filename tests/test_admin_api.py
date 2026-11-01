@@ -266,3 +266,11 @@ def test_websocket_refuses_a_disabled_tenant_at_connect(fast_ws_client, tenant):
         with c.websocket_connect(f"/v1/ws?token={mint_token('alice', tenant, ['user'])}") as ws:
             ws.receive_text()
     assert exc.value.code == 4403
+
+
+def test_websocket_serves_platform_admins(fast_ws_client):
+    token = mint_token("ops", "platform", ["platform-admin"])
+    with fast_ws_client.websocket_connect(f"/v1/ws?token={token}") as ws:
+        assert '"hello"' in ws.receive_text()
+        with pytest.raises(AssertionError, match="still open"):
+            _closed_with(ws, within=1.2)  # several re-checks pass: the stream stays open
