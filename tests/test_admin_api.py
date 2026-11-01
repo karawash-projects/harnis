@@ -199,3 +199,70 @@ def test_api_keys_count_as_their_creator_for_separation_of_duties(app_pool, redi
         a = pending(uk)
         assert c.post(f"/v1/approvals/{a['approval_id']}/decision", json={"approved": True,
                       "action_hash": a["action_hash"]}, headers=h("rita", "acme", ("reviewer",))).status_code == 202
+
+
+# -- live event stream: a connection does not outlive its credential ---------------
+@pytest.fixture
+def fast_ws_client(app_pool, redis_client, tmp_path):
+    from harnis.api import create_app
+
+    settings = Settings(workspaces_dir=str(tmp_path / "ws"), redis_url="redis://127.0.0.1:6379/15",
+                        rate_limit_capacity=100, ws_revalidate_seconds=0.3)
+    app = create_app(settings, store=PgStore(app_pool), redis=redis_client,
+                     router=LLMRouter([MockProvider()], sleep=lambda s: None), sandbox=FakeSandbox())
+    with TestClient(app) as c:
+        yield c
+
+
+def _closed_with(ws, within: float = 10.0) -> int:
+    """Close code the server sent within `within` seconds (fails, never hangs,
+    if the stream stays open)."""
+    import threading
+
+    from starlette.websockets import WebSocketDisconnect
+
+    out: dict = {}
+
+    def drain() -> None:
+        try:
+            while True:  # events may arrive first; the close follows within a few checks
+                ws.receive_text()
+        except WebSocketDisconnect as exc:
+            out["code"] = exc.code
+        except Exception as exc:  # noqa: BLE001
+            out["error"] = exc
+
+    t = threading.Thread(target=drain, daemon=True)
+    t.start()
+    t.join(within)
+    assert "code" in out, f"event stream still open after {within}s ({out.get('error')!r})"
+    return out["code"]
+
+
+def test_websocket_closes_when_its_api_key_is_revoked(fast_ws_client, tenant):
+    c, admin = fast_ws_client, h("boss", tenant, ("admin",))
+    created = c.post("/v1/admin/api-keys", json={"name": "ws"}, headers=admin).json()
+    with c.websocket_connect(f"/v1/ws?token={created['key']}") as ws:
+        assert '"hello"' in ws.receive_text()
+        assert c.delete(f"/v1/admin/api-keys/{created['key_id']}", headers=admin).status_code == 204
+        assert _closed_with(ws) == 4401
+
+
+def test_websocket_closes_when_the_tenant_is_disabled(fast_ws_client, tenant):
+    c = fast_ws_client
+    token = mint_token("alice", tenant, ["user"])
+    with c.websocket_connect(f"/v1/ws?token={token}") as ws:
+        assert '"hello"' in ws.receive_text()
+        assert c.put(f"/v1/admin/tenants/{tenant}", json={"active": False}, headers=PLATFORM).status_code == 200
+        assert _closed_with(ws) == 4403
+
+
+def test_websocket_refuses_a_disabled_tenant_at_connect(fast_ws_client, tenant):
+    from starlette.websockets import WebSocketDisconnect
+
+    c = fast_ws_client
+    assert c.put(f"/v1/admin/tenants/{tenant}", json={"active": False}, headers=PLATFORM).status_code == 200
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with c.websocket_connect(f"/v1/ws?token={mint_token('alice', tenant, ['user'])}") as ws:
+            ws.receive_text()
+    assert exc.value.code == 4403

@@ -249,6 +249,8 @@ All endpoints except `/health`, `/ready` and `/` need `Authorization: Bearer <OI
 | `GET /me` | any | who the token says you are |
 | `WS /v1/ws?token=...` | any | live events (your sessions; plus approvals for reviewers) |
 
+The event stream re-checks its token every `WS_REVALIDATE_SECONDS` (default 60) and closes with code 4401 once the token has expired or the API key was revoked, or 4403 once the tenant was disabled; clients reconnect with a fresh token.
+
 ## Checking a deployment
 
 `scripts/harnis_check.py` is a standalone script (Python standard library only, no Harnis install needed) that exercises every feature against a running API and prints PASS / FAIL / SKIP for each: health and security headers, authentication and roles, API keys, conversations and routing, the semantic cache, approvals bound to the exact action, the sandbox (including that it has no network), guardrails, the loop breaker, separation of duties, tenant isolation, tenant administration, prompts, usage, the audit log, live events and rate limits.

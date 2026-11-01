@@ -200,6 +200,9 @@ class Settings(BaseSettings):
 
     # --- Human-in-the-loop --------------------------------------------------
     approval_ttl_seconds: int = 3600
+    # Live event connections (/v1/ws) re-check their credential this often and
+    # close when it has expired or been revoked, or the tenant was disabled.
+    ws_revalidate_seconds: float = Field(60, gt=0)
 
     # --- Alerts -------------------------------------------------------------
     alert_webhook_url: str = ""
