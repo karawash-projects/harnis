@@ -1,6 +1,6 @@
 # Harnis
 
-[![CI](https://github.com/karawash-projects/harnis/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/karawash-projects/harnis/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/harnis)](https://pypi.org/project/harnis/) [![Python](https://img.shields.io/pypi/pyversions/harnis)](https://pypi.org/project/harnis/) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/karawash-projects/harnis/blob/main/LICENSE)
+[![CI](https://github.com/karawash-projects/harnis/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/karawash-projects/harnis/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/harnis)](https://pypi.org/project/harnis/) [![Python](https://img.shields.io/pypi/pyversions/harnis)](https://pypi.org/project/harnis/) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/karawash-projects/harnis/blob/main/LICENSE) [![Docs](https://img.shields.io/badge/docs-karawash--projects.github.io%2Fharnis-teal)](https://karawash-projects.github.io/harnis/)
 
 **An open-source, self-hosted platform for running AI agents safely inside a company.**
 

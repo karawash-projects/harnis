@@ -2,7 +2,7 @@
 
 Harnis keeps everything an agent can do in one registry: **tools**, **agents** and **model providers**. The built-ins (`coder`, `support`, `read_file`, `write_file`, the Anthropic/OpenAI/Gemini/Nova providers, ...) are registered exactly the way a plugin registers its own, so you can add to them, or replace them, without forking.
 
-A plugin is an ordinary Python package with a `register(registry)` function. [`examples/plugins/harnis-plugin-tickets`](../examples/plugins/harnis-plugin-tickets) is a complete one: a `triage` agent that searches for existing tickets and files new ones, with every new ticket approved by a reviewer first.
+A plugin is an ordinary Python package with a `register(registry)` function. [`examples/plugins/harnis-plugin-tickets`](https://github.com/karawash-projects/harnis/tree/main/examples/plugins/harnis-plugin-tickets) is a complete one: a `triage` agent that searches for existing tickets and files new ones, with every new ticket approved by a reviewer first.
 
 ## Loading plugins
 

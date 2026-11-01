@@ -767,6 +767,13 @@ def t_load(args: list[str]) -> None:
     sys.exit(subprocess.run([*cmd, *args], cwd=ROOT).returncode)
 
 
+def t_docs(args: list[str]) -> None:
+    """Build the documentation site into site/ (--serve: live preview on :8001)."""
+    if subprocess.run([PY, "-c", "import mkdocs, material"], capture_output=True).returncode != 0:
+        run(PY, "-m", "pip", "install", "-q", "-e", ".[docs]")
+    sys.exit(subprocess.run([PY, str(ROOT / "scripts" / "build_docs.py"), *args], cwd=ROOT).returncode)
+
+
 TASKS = {
     "install": (t_install, "create .venv and install the package with dev extras"),
     "env": (t_env, "create .env from .env.example if missing"),
@@ -795,6 +802,7 @@ TASKS = {
     "k8s-up": (t_k8s_up, "local kind cluster: build + load images, Postgres/Redis, Helm release"),
     "k8s-check": (t_k8s_check, "feature check against the kind cluster through a port-forward"),
     "k8s-down": (t_k8s_down, "delete the local kind cluster"),
+    "docs": (t_docs, "build the documentation site into site/  [--serve for a live preview]"),
     "clean": (t_clean, "remove caches and session workspaces"),
 }
 

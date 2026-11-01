@@ -1,7 +1,7 @@
 # Running Harnis on Kubernetes
 
 This guide covers deploying Harnis with the Helm chart in
-[`deploy/helm/harnis`](../deploy/helm/harnis), and how agent commands run in
+[`deploy/helm/harnis`](https://github.com/karawash-projects/harnis/tree/main/deploy/helm/harnis), and how agent commands run in
 per-command sandbox Pods instead of Docker containers.
 
 ```
