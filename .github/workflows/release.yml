@@ -245,6 +245,16 @@ jobs:
         with:
           name: chart
           path: artifacts/chart/
+      - uses: actions/setup-python@v7
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - name: List third-party licenses for this release's dependencies
+        env:
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          python -m venv /tmp/licenses
+          /tmp/licenses/bin/pip install -q artifacts/dist/*.whl
+          /tmp/licenses/bin/python scripts/third_party_licenses.py --for-version "$VERSION" \
+            -o artifacts/THIRD_PARTY_LICENSES.md
       - name: Extract release notes from CHANGELOG.md
         shell: bash
         env:
@@ -275,4 +285,4 @@ jobs:
           flags=()
           if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
           gh release create "$GITHUB_REF_NAME" --title "Harnis $VERSION" --notes-file notes.md \
-            --verify-tag "${flags[@]}" artifacts/dist/* artifacts/chart/*
+            --verify-tag "${flags[@]}" artifacts/dist/* artifacts/chart/* artifacts/THIRD_PARTY_LICENSES.md

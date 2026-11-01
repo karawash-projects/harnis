@@ -350,3 +350,5 @@ Harnis is provided **"as is", without warranties or conditions of any kind**, an
 ## License
 
 Copyright 2026 Ahmad Karawash. Licensed under the Apache License, Version 2.0; see [LICENSE](https://github.com/karawash-projects/harnis/blob/main/LICENSE) and [NOTICE](https://github.com/karawash-projects/harnis/blob/main/NOTICE).
+
+Harnis runs with third-party packages under their own licenses (mostly Apache 2.0, MIT and BSD; the PostgreSQL driver, psycopg, is LGPL-3.0). [THIRD_PARTY_LICENSES.md](https://github.com/karawash-projects/harnis/blob/main/THIRD_PARTY_LICENSES.md) lists them, and each GitHub Release carries the list for its exact versions (`python tasks.py licenses` regenerates it for your environment).
