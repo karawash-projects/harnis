@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-11-01
+
+### Security
+- The live event stream (`/v1/ws`) re-checks its credential every `WS_REVALIDATE_SECONDS` (default 60) and closes once the token has expired, the API key was revoked (4401) or the tenant was disabled (4403). Before, it checked only when the connection opened and kept streaming session and approval events afterwards. A disabled tenant is also refused at connect, and the checks no longer run on the event loop.
+
+### Added
+- Documentation site built with MkDocs (`python tasks.py docs`) and published to GitHub Pages by a new `docs` workflow; the build fails on broken links.
+- `THIRD_PARTY_LICENSES.md` and `scripts/third_party_licenses.py` (`python tasks.py licenses`); each GitHub Release carries the list for its exact dependency versions.
+- README badges and a console screenshot; a social preview image (`docs/images/social-preview.png`).
+
+### Changed
+- GitHub Actions moved to their current major versions (Node 24), and Linux jobs run on `ubuntu-24.04`.
+- The DCO check skips commits made by bots, so Dependabot pull requests can pass.
+- Console: the turn summary counts "1 tool call" instead of "1 tools".
+
 ## [1.0.1] - 2026-10-19
 
 ### Fixed
