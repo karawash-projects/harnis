@@ -1,5 +1,5 @@
 # Local stack (same on Windows, macOS and Linux):
-#   python tasks.py up        -> postgres, redis-stack, jaeger, then migrations + demo seed
+#   python tasks.py up        -> postgres, valkey, jaeger, then migrations + demo seed
 #   python tasks.py dev       -> runs the API on your machine (recommended for development)
 #   python tasks.py up-full   -> also runs the API in a container (see the warning on `api`)
 #
@@ -23,12 +23,14 @@ services:
       retries: 20
 
   redis:
-    # Redis Stack includes RediSearch (vector search for the semantic cache).
-    # Plain redis:7 also works; the cache falls back to brute-force search.
-    image: redis/redis-stack-server:7.4.0-v1
+    # Valkey (BSD-3-Clause), the open-source fork of Redis; Harnis talks to it as
+    # Redis. Without a search engine the semantic cache uses its brute-force
+    # fallback, which is fine for development. For the vector index use Redis 8
+    # or Redis Stack instead (source-available licenses; see docs/kubernetes.md).
+    image: valkey/valkey:9.0.7-alpine
     ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 2s
       timeout: 3s
       retries: 20

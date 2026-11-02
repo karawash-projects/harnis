@@ -75,7 +75,7 @@ body:
     attributes:
       label: Environment
       description: OS, Python version, Docker or Kubernetes version, sandbox runtime (runc, runsc, Kata), Postgres and Redis versions.
-      placeholder: "Ubuntu 24.04, Python 3.12, Docker 27, runc, Postgres 16, Redis Stack 7.4"
+      placeholder: "Ubuntu 24.04, Python 3.12, Docker 27, runc, Postgres 16, Valkey 9.0"
   - type: input
     id: providers
     attributes:

@@ -8,3 +8,8 @@ This distribution contains no third-party code. Dependencies, container base
 images, models and services used with Harnis are provided by third parties
 under their own licenses and terms; users are responsible for reviewing them
 and obtaining any licenses they need.
+
+The published container images are built on the official Python images for
+Debian; the source code of their Debian packages is available from Debian at
+https://sources.debian.org/. The Python packages they contain are listed with
+their licenses in THIRD_PARTY_LICENSES.md and in each GitHub Release.

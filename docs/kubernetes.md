@@ -14,12 +14,12 @@ per-command sandbox Pods instead of Docker containers.
                  | maintenance CronJob, sandbox reaper        |        |  optional gVisor/Kata RuntimeClass     |
                  +------+-------------------+----------------+        +----------------------------------------+
                         |                   |                                 deny-all NetworkPolicy
-                 managed Postgres 15+   managed Redis / Redis Stack           Pod Security "restricted"
+                 managed Postgres 15+   managed Redis / Valkey                Pod Security "restricted"
 ```
 
 The chart does not install Postgres or Redis. Use managed services, or
-separate charts you operate yourself (for example the Bitnami PostgreSQL and
-Redis charts, CloudNativePG, or the Redis Stack images).
+separate charts you operate yourself (for example CloudNativePG, or the
+Valkey or Redis images).
 
 ## Prerequisites
 
@@ -28,7 +28,7 @@ Redis charts, CloudNativePG, or the Redis Stack images).
 | Kubernetes 1.27+ | `autoscaling/v2`, `policy/v1`, Pod Security Admission. |
 | Helm 3.8+ or Helm 4 | The chart is `apiVersion: v2`. |
 | Postgres 15+ | Managed (RDS, Cloud SQL, Azure Database, ...). You need an owner/admin login that can `CREATE ROLE`; the app itself connects as `harnis_app`, which migrations create. |
-| Redis 7+ | Redis Stack (RediSearch) enables the vector semantic cache; plain Redis works with a brute-force fallback. Pub/sub must be allowed (it carries WebSocket events between replicas). |
+| Redis 7+ or Valkey | Any Redis-compatible server. With a search engine (Redis 8, Redis Stack, or a managed Redis that offers vector search) the semantic cache uses a vector index; without one (Valkey, plain Redis) it falls back to a brute-force scan per tenant and scope. Licenses differ: Valkey is BSD-3-Clause; Redis 7.4+ and Redis Stack are under source-available licenses (RSALv2 / SSPLv1; Redis 8 adds AGPLv3), which allow use inside your company but restrict offering Redis itself as a service. Pub/sub must be allowed (it carries WebSocket events between replicas). |
 | Ingress controller | ingress-nginx, Traefik, a cloud load balancer controller, ... WebSockets (`/v1/ws`) must be allowed with long read timeouts. |
 | A CNI that enforces NetworkPolicy | Calico, Cilium, Antrea, or a cloud CNI with network policy enabled. Without it the sandbox deny-all policy has no effect; Harnis detects this and refuses to run sandbox commands (see [Network isolation check](#network-isolation-check)). |
 | ReadWriteMany storage (for more than one replica) | EFS, Filestore, Azure Files, CephFS, NFS. See [Workspaces](#session-workspaces-and-multiple-replicas). |

@@ -11,10 +11,11 @@ Fixes vs. the original design:
     (first message of a support conversation; never for coding).
 
 Backends:
-  * RediSearch (Redis Stack / Redis 8): HNSW vector index with a TAG filter.
+  * Search engine (Redis 8 / Redis Stack): HNSW vector index with a TAG filter.
     FLOAT32 by default; FLOAT16 halves memory on RediSearch 2.10+.
-  * Fallback for plain Redis: brute-force cosine over the newest N entries of
-    the tenant+scope. Fine for development; use RediSearch in production.
+  * Fallback (Valkey, plain Redis): brute-force cosine over the newest N
+    entries of the tenant+scope. Fine for development and small deployments;
+    use a server with a search engine when the cache grows.
 
 Embeddings: `HashingEmbedder` is a deterministic, offline, *lexical* embedder
 (character n-gram hashing) — good enough to catch near-duplicates without an
