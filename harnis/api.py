@@ -604,13 +604,23 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
     async def ws(websocket: WebSocket, token: str = Query(...)):
         # Browsers can't set headers on WebSocket upgrades, so the token comes in
         # the query string. Keep tokens short-lived and don't log query strings.
-        try:
+        def check() -> Principal:
+            # Same rules as an HTTP request: a valid credential and an active
+            # tenant. Runs in a worker thread (API keys and OIDC can do I/O).
             p = app.state.auth.authenticate(token)
-        except HTTPException:
-            await websocket.close(code=4401)
+            # Platform admins hold no role inside a tenant (their pseudo-tenant
+            # has no row), so only tenant roles are tied to an active tenant.
+            if p.roles & TENANT_ROLES and not store.tenant_active(p.tenant_id):
+                raise HTTPException(403, "tenant is disabled")
+            return p
+
+        try:
+            p = await asyncio.to_thread(check)
+        except HTTPException as exc:
+            await websocket.close(code=4403 if exc.status_code == 403 else 4401)
             return
         await websocket.accept()
-        ar = aioredis.Redis.from_url(settings.redis_url)
+        ar = aioredis.Redis.from_url(settings.redis_url)  # pub/sub holds its own connection anyway
         pubsub = ar.pubsub()
         channels = [f"events:{p.tenant_id}:user:{p.user_id}"]
         if p.has("reviewer"):
@@ -623,15 +633,38 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
                     data = msg["data"]
                     await websocket.send_text(data.decode() if isinstance(data, bytes) else data)
 
-        task = asyncio.create_task(pump())
-        try:
-            await websocket.send_text(json.dumps({"type": "hello", "channels": len(channels)}))
+        async def reader() -> None:
             while True:
                 await websocket.receive_text()  # keepalive / client pings
+
+        async def watchdog() -> int:
+            # A connection outlives the token that opened it: re-check it, and
+            # stop streaming once it expired, was revoked or the tenant was disabled.
+            while True:
+                await asyncio.sleep(settings.ws_revalidate_seconds)
+                try:
+                    await asyncio.to_thread(check)
+                except HTTPException as exc:
+                    return 4403 if exc.status_code == 403 else 4401
+
+        tasks = [asyncio.create_task(pump()), asyncio.create_task(reader()), asyncio.create_task(watchdog())]
+        try:
+            await websocket.send_text(json.dumps({"type": "hello", "channels": len(channels)}))
+            done, _ = await asyncio.wait(tasks[1:], return_when=asyncio.FIRST_COMPLETED)
+            watch = tasks[2]
+            if watch in done and not watch.cancelled() and watch.exception() is None:
+                log.info("closing event stream for %s/%s: credential no longer valid", p.tenant_id, p.user_id)
+                await websocket.close(code=watch.result())
         except WebSocketDisconnect:
             pass
         finally:
-            task.cancel()
+            for t in tasks:
+                t.cancel()
+            for t in tasks:
+                try:
+                    await t
+                except (asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
+                    pass
             await pubsub.unsubscribe()
             await pubsub.aclose()
             await ar.aclose()

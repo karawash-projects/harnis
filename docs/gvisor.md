@@ -203,7 +203,7 @@ that runs sandboxes, and re-run the check after Docker or gVisor upgrades.
 
 ## Continuous integration
 
-`.github/workflows/gvisor.yml` runs on `ubuntu-latest` on every push and pull
+`.github/workflows/gvisor.yml` runs on `ubuntu-24.04` on every push and pull
 request: it installs `runsc` from the official apt repository, runs
 `sudo runsc install` and restarts Docker, builds `Dockerfile.sandbox`, installs
 the package (`pip install -e ".[dev]"`) and runs `scripts/gvisor_check.py`.

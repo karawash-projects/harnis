@@ -13,3 +13,7 @@ evals/reports/
 
 .k8s-local/
 backups/
+
+# Documentation site build
+.docs-build/
+site/

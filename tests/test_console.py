@@ -366,3 +366,56 @@ def test_admin_exports_and_erases_a_user_and_platform_deletes_a_tenant(page, tmp
         page.fill("#deleteConfirm", tid)
         page.click("#deleteTenantBtn")
         expect(page.locator("tr", has_text=tid)).to_have_count(0)
+
+
+def _sign_in_with(page, url, token):
+    page.goto(url + "/")
+    page.evaluate("sessionStorage.clear()")
+    page.reload()
+    page.locator("details summary").click()
+    page.fill("#tokenInput", token)
+    page.get_by_role("button", name="Continue", exact=True).click()
+
+
+def _call(url, method, path, token, body=None):
+    import urllib.request
+
+    req = urllib.request.Request(url + path, method=method, data=None if body is None else json.dumps(body).encode(),
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as r:
+        return json.loads(r.read() or b"null")
+
+
+def test_console_signs_out_when_its_api_key_is_revoked(page, tmp_path, app_pool, redis_client):
+    from harnis.auth import mint_token
+
+    expect = sync_api.expect
+    tid = f"t-{uuid.uuid4().hex[:8]}"
+    platform, admin = mint_token("ops", "platform", ["platform-admin"]), mint_token("boss", tid, ["admin"])
+    with serve(harnis_app(tmp_path, app_pool, redis_client, ws_revalidate_seconds=0.5)) as url:
+        _call(url, "PUT", f"/v1/admin/tenants/{tid}", platform, {"name": "Key Co", "allowed_providers": ["mock"]})
+        key = _call(url, "POST", "/v1/admin/api-keys", admin, {"name": "console", "roles": ["admin"]})
+        _sign_in_with(page, url, key["key"])
+        expect(page.locator("#liveDot")).to_have_class("live on")
+        _call(url, "DELETE", f"/v1/admin/api-keys/{key['key_id']}", admin)
+        # The stream closes with 4401 and the console asks for a new sign-in, once.
+        expect(page.locator(".notice")).to_contain_text("Your session has ended", timeout=10000)
+        expect(page.locator("#tokenInput")).to_be_attached()
+        handshakes = []
+        page.on("websocket", lambda ws: handshakes.append(ws.url))
+        page.wait_for_timeout(4000)
+        assert handshakes == []  # no reconnect loop with the revoked key
+
+
+def test_console_tells_users_when_their_organization_is_disabled(page, tmp_path, app_pool, redis_client):
+    from harnis.auth import mint_token
+
+    expect = sync_api.expect
+    tid = f"t-{uuid.uuid4().hex[:8]}"
+    platform = mint_token("ops", "platform", ["platform-admin"])
+    with serve(harnis_app(tmp_path, app_pool, redis_client, ws_revalidate_seconds=0.5)) as url:
+        _call(url, "PUT", f"/v1/admin/tenants/{tid}", platform, {"name": "Off Co", "allowed_providers": ["mock"]})
+        _sign_in_with(page, url, mint_token("erin", tid, ["user"]))
+        expect(page.locator("#liveDot")).to_have_class("live on")
+        _call(url, "PUT", f"/v1/admin/tenants/{tid}", platform, {"active": False})
+        expect(page.locator(".notice")).to_contain_text("access has been disabled", timeout=10000)

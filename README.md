@@ -1,5 +1,7 @@
 # Harnis
 
+[![CI](https://github.com/karawash-projects/harnis/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/karawash-projects/harnis/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/harnis)](https://pypi.org/project/harnis/) [![Python](https://img.shields.io/pypi/pyversions/harnis)](https://pypi.org/project/harnis/) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/karawash-projects/harnis/blob/main/LICENSE) [![Docs](https://img.shields.io/badge/docs-karawash--projects.github.io%2Fharnis-teal)](https://karawash-projects.github.io/harnis/)
+
 **An open-source, self-hosted platform for running AI agents safely inside a company.**
 
 Harnis gives your teams one place to run agents that read and change real things (code, files, tickets, internal systems) without handing a model the keys. Every agent runs inside the same harness: tenant isolation enforced by the database, side effects held for human approval, untrusted code in a locked-down sandbox, budgets and loop breakers on every turn, and a full audit trail.
@@ -13,6 +15,10 @@ It ships with three workloads on one engine:
 Bring your own models (Anthropic, OpenAI, Google Gemini, Amazon Nova on Bedrock, or anything with an OpenAI-compatible API, such as vLLM or Ollama), your own identity provider (any OIDC IdP), and your own tools and agents (plugins). Run it with Docker Compose on a laptop or with the Helm chart on Kubernetes.
 
 Licensed under [Apache 2.0](https://github.com/karawash-projects/harnis/blob/main/LICENSE) and provided **as is**, without warranty or support: you are free to use, change and extend it, and you are responsible for how you run it (see [Use at your own risk](https://github.com/karawash-projects/harnis#use-at-your-own-risk)).
+
+![The Harnis console: a coding agent's file write waits for approval, with its diff](https://raw.githubusercontent.com/karawash-projects/harnis/main/docs/images/console-approval.png)
+
+*The console: the coding agent wants to write `greet.py`, and nothing happens until a reviewer approves this exact diff.*
 
 ## Why Harnis
 
@@ -249,6 +255,8 @@ All endpoints except `/health`, `/ready` and `/` need `Authorization: Bearer <OI
 | `GET /me` | any | who the token says you are |
 | `WS /v1/ws?token=...` | any | live events (your sessions; plus approvals for reviewers) |
 
+The event stream re-checks its token every `WS_REVALIDATE_SECONDS` (default 60) and closes with code 4401 once the token has expired or the API key was revoked, or 4403 once the tenant was disabled; clients reconnect with a fresh token.
+
 ## Checking a deployment
 
 `scripts/harnis_check.py` is a standalone script (Python standard library only, no Harnis install needed) that exercises every feature against a running API and prints PASS / FAIL / SKIP for each: health and security headers, authentication and roles, API keys, conversations and routing, the semantic cache, approvals bound to the exact action, the sandbox (including that it has no network), guardrails, the loop breaker, separation of duties, tenant isolation, tenant administration, prompts, usage, the audit log, live events and rate limits.
@@ -342,3 +350,5 @@ Harnis is provided **"as is", without warranties or conditions of any kind**, an
 ## License
 
 Copyright 2026 Ahmad Karawash. Licensed under the Apache License, Version 2.0; see [LICENSE](https://github.com/karawash-projects/harnis/blob/main/LICENSE) and [NOTICE](https://github.com/karawash-projects/harnis/blob/main/NOTICE).
+
+Harnis runs with third-party packages under their own licenses (mostly Apache 2.0, MIT and BSD; the PostgreSQL driver, psycopg, is LGPL-3.0). [THIRD_PARTY_LICENSES.md](https://github.com/karawash-projects/harnis/blob/main/THIRD_PARTY_LICENSES.md) lists them, and each GitHub Release carries the list for its exact versions (`python tasks.py licenses` regenerates it for your environment).

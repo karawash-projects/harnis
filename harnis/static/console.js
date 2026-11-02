@@ -55,6 +55,7 @@
     return d.toLocaleDateString();
   }
   const money = (v) => "$" + Number(v || 0).toFixed(4);
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
   const num = (v) => Number(v || 0).toLocaleString();
 
   function jwtClaims(token) {
@@ -257,7 +258,7 @@
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${proto}://${location.host}/v1/ws?token=${encodeURIComponent(state.token)}`);
     state.ws = ws;
-    ws.onopen = () => setLive(true);
+    ws.onopen = () => { setLive(true); state.wsBackoff = 0; };
     ws.onmessage = (ev) => {
       let e;
       try { e = JSON.parse(ev.data); } catch { return; }
@@ -267,9 +268,25 @@
       }
       for (const fn of listeners) { try { fn(e); } catch { /* view gone */ } }
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       setLive(false);
-      if (state.token) setTimeout(() => state.token && state.ws === ws && connectEvents(), 3000);
+      if (state.ws !== ws || !state.token) return;
+      // The server re-checks the credential while connected: 4401 = expired or
+      // revoked, 4403 = the organization (tenant) was disabled. Retrying can't help.
+      if (ev.code === 4401) { signOut("Your session has ended. Please sign in again."); return; }
+      if (ev.code === 4403) { signOut("Your organization's access has been disabled. Contact your administrator."); return; }
+      // Anything else (network drop, server restart, a refused handshake): confirm
+      // the sign-in is still good, then reconnect with a growing delay (3 s to 60 s).
+      const delay = Math.min(60000, 3000 * 2 ** (state.wsBackoff || 0));
+      state.wsBackoff = Math.min((state.wsBackoff || 0) + 1, 5);
+      setTimeout(async () => {
+        if (!state.token || state.ws !== ws) return;
+        try {
+          const r = await fetch("/me", { headers: { Authorization: "Bearer " + state.token } });
+          if (r.status === 401) { signOut("Your session has ended. Please sign in again."); return; }
+        } catch { /* server unreachable: try the stream anyway, it backs off */ }
+        if (state.token && state.ws === ws) connectEvents();
+      }, delay);
     };
   }
   function setLive(on) {
@@ -479,7 +496,7 @@
         h("span", { class: "mono small", title: v.session_id, text: v.session_id.slice(0, 8) }),
         statusPill(v.status), v.agent ? h("span", { class: "pill", text: "agent: " + v.agent }) : null,
         h("span", { class: "spacer" }),
-        t.steps != null ? h("span", { class: "muted small", text: `${t.steps} steps · ${t.tool_calls || 0} tools · ${money(t.cost_usd)}${t.cache_hit ? " · cached" : ""}` }) : null,
+        t.steps != null ? h("span", { class: "muted small", text: `${plural(t.steps, "step")} · ${plural(t.tool_calls || 0, "tool call")} · ${money(t.cost_usd)}${t.cache_hit ? " · cached" : ""}` }) : null,
         h("button", { class: "btn ghost sm", id: "filesBtn", onclick: toggleFiles }, "Files"));
       const nodes = [];
       for (const m of v.messages) {

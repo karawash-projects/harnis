@@ -1,0 +1,61 @@
+# Documentation site. Build with `python tasks.py docs` (or `--serve` to preview);
+# scripts/build_docs.py assembles the pages (README as the home page) into
+# .docs-build, which is what MkDocs reads.
+site_name: Harnis
+site_description: Open-source, self-hosted platform for running AI agents safely inside a company.
+site_url: https://karawash-projects.github.io/harnis/
+repo_url: https://github.com/karawash-projects/harnis
+repo_name: karawash-projects/harnis
+edit_uri: ""
+copyright: Copyright 2026 Ahmad Karawash. Apache License 2.0, provided as is.
+docs_dir: .docs-build
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle: { icon: material/weather-night, name: Dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle: { icon: material/weather-sunny, name: Light mode }
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - search.highlight
+  logo: images/logo.svg
+  favicon: images/logo.svg
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Overview: index.md
+  - Architecture: ARCHITECTURE.md
+  - Deploy:
+      - Kubernetes: kubernetes.md
+      - Operations: operations.md
+      - Single sign-on with Keycloak: keycloak.md
+      - gVisor sandbox: gvisor.md
+  - Extend:
+      - Plugins: plugins.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.highlight: { anchor_linenums: true }
+  - pymdownx.superfences
+  - pymdownx.details
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn

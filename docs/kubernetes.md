@@ -1,7 +1,7 @@
 # Running Harnis on Kubernetes
 
 This guide covers deploying Harnis with the Helm chart in
-[`deploy/helm/harnis`](../deploy/helm/harnis), and how agent commands run in
+[`deploy/helm/harnis`](https://github.com/karawash-projects/harnis/tree/main/deploy/helm/harnis), and how agent commands run in
 per-command sandbox Pods instead of Docker containers.
 
 ```
@@ -51,10 +51,10 @@ python tasks.py k8s-down
 ## 1. Build and push the images
 
 ```bash
-docker build -t registry.example.com/harnis:1.0.1 .
-docker build -f Dockerfile.sandbox -t registry.example.com/harnis-sandbox:1.0.1 .
-docker push registry.example.com/harnis:1.0.1
-docker push registry.example.com/harnis-sandbox:1.0.1
+docker build -t registry.example.com/harnis:1.0.2 .
+docker build -f Dockerfile.sandbox -t registry.example.com/harnis-sandbox:1.0.2 .
+docker push registry.example.com/harnis:1.0.2
+docker push registry.example.com/harnis-sandbox:1.0.2
 ```
 
 The API image must include the `kubernetes` Python package (the `k8s` extra).
@@ -222,11 +222,11 @@ A minimal production values file (`values-prod.yaml`):
 ```yaml
 image:
   repository: registry.example.com/harnis
-  tag: "1.0.1"
+  tag: "1.0.2"
 sandbox:
   image:
     repository: registry.example.com/harnis-sandbox
-    tag: "1.0.1"
+    tag: "1.0.2"
   runtimeClassName: gvisor
   nodeSelector: {harnis.dev/pool: sandbox}
   tolerations:

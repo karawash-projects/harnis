@@ -1,13 +1,13 @@
 # Operating Harnis in production
 
-This guide is for the people who run Harnis for a company: what to configure before going live, and how to handle installs, prices, personal data, backups, upgrades, monitoring and capacity. Harnis is provided as is (see [GOVERNANCE.md](../GOVERNANCE.md)); test every step in your own environment.
+This guide is for the people who run Harnis for a company: what to configure before going live, and how to handle installs, prices, personal data, backups, upgrades, monitoring and capacity. Harnis is provided as is (see [GOVERNANCE.md](https://github.com/karawash-projects/harnis/blob/main/GOVERNANCE.md)); test every step in your own environment.
 
 ## Go-live checklist
 
 Work through this list on a staging deployment that mirrors production, then again on production.
 
 **Identity and access**
-- [ ] `AUTH_MODE=oidc` against your identity provider, with `OIDC_ROLE_MAP` mapping your groups to `user`, `reviewer`, `admin` and `platform-admin` ([README: Single sign-on](../README.md#2-single-sign-on-oidc)). Rehearse it locally with `python tasks.py sso-up` ([keycloak.md](keycloak.md)).
+- [ ] `AUTH_MODE=oidc` against your identity provider, with `OIDC_ROLE_MAP` mapping your groups to `user`, `reviewer`, `admin` and `platform-admin` ([README: Single sign-on](https://github.com/karawash-projects/harnis#2-single-sign-on-oidc)). Rehearse it locally with `python tasks.py sso-up` ([keycloak.md](keycloak.md)).
 - [ ] Console sign-in works: a public SPA client with redirect URI `https://<host>/`, `OIDC_CONSOLE_CLIENT_ID` set.
 - [ ] `ALLOW_SELF_APPROVAL=false` (enforced in production) and enough reviewers in each tenant.
 - [ ] Service accounts use API keys with the fewest roles and an expiry.

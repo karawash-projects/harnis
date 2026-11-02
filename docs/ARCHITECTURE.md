@@ -133,7 +133,7 @@ Tenants share the API processes, the database and Redis. Isolation is logical (e
 | Plugins | Explicit opt-in: only modules named in `PLUGINS` load | Plugins run inside the API process with its privileges and database role. Review them like your own code. |
 | Telemetry and alerts | Spans record shapes (tool names, argv0, status), not prompts, commands or file contents; alerts carry ids only | Logs and traces still contain tenant and session ids. |
 
-See also the README's security section and [SECURITY.md](../SECURITY.md). Harnis is provided as is; these boundaries are design goals, not guarantees.
+See also the README's security section and [SECURITY.md](https://github.com/karawash-projects/harnis/blob/main/SECURITY.md). Harnis is provided as is; these boundaries are design goals, not guarantees.
 
 ## Where state lives
 

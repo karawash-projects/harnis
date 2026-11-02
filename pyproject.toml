@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "harnis"
-version = "1.0.1"
+version = "1.0.2"
 description = "Harnis: an open-source, multi-tenant agent harness for companies: coding agents, multi-agent workflows and stateful apps with approvals, sandboxing and tenant isolation."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -55,10 +55,12 @@ dependencies = [
 [project.optional-dependencies]
 k8s = ["kubernetes>=31"]
 dev = ["pytest>=8", "fakeredis[lua]>=2.23", "kubernetes>=31", "build>=1.2"]
+# Documentation site (python tasks.py docs). MkDocs 2 drops the plugin and theme system.
+docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.5,<10"]
 
 [project.urls]
 Homepage = "https://github.com/karawash-projects/harnis"
-Documentation = "https://github.com/karawash-projects/harnis#readme"
+Documentation = "https://karawash-projects.github.io/harnis/"
 Issues = "https://github.com/karawash-projects/harnis/issues"
 Changelog = "https://github.com/karawash-projects/harnis/blob/main/CHANGELOG.md"
 
