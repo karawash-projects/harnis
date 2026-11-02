@@ -152,12 +152,22 @@ already become %2B).
 DATABASE_URL (app role harnis_app) and MIGRATION_DATABASE_URL (owner).
 Empty when nothing is configured, so NOTES.txt can warn about it.
 */}}
+{{/* Where the database CA bundle is mounted, or empty. */}}
+{{- define "harnis.dbCaPath" -}}
+{{- with .Values.externalDatabase.caSecret }}{{ if .name }}/etc/harnis/db-ca/{{ .key | default "ca.pem" }}{{ end }}{{ end }}
+{{- end }}
+
+{{- define "harnis.dbUrlParams" -}}
+{{- $ca := include "harnis.dbCaPath" . -}}
+sslmode={{ .Values.externalDatabase.sslmode }}{{ if $ca }}&sslrootcert={{ $ca }}{{ end }}
+{{- end }}
+
 {{- define "harnis.databaseUrl" -}}
 {{- $db := .Values.externalDatabase }}
 {{- if $db.url }}
 {{- $db.url }}
 {{- else if $db.host }}
-{{- printf "postgresql://harnis_app:%s@%s:%v/%s?sslmode=%s" (include "harnis.urlEscape" $db.appPassword) $db.host $db.port $db.database $db.sslmode }}
+{{- printf "postgresql://harnis_app:%s@%s:%v/%s?%s" (include "harnis.urlEscape" $db.appPassword) $db.host $db.port $db.database (include "harnis.dbUrlParams" .) }}
 {{- end }}
 {{- end }}
 
@@ -166,7 +176,7 @@ Empty when nothing is configured, so NOTES.txt can warn about it.
 {{- if $db.migrationUrl }}
 {{- $db.migrationUrl }}
 {{- else if $db.host }}
-{{- printf "postgresql://%s:%s@%s:%v/%s?sslmode=%s" (include "harnis.urlEscape" $db.ownerUser) (include "harnis.urlEscape" $db.ownerPassword) $db.host $db.port $db.database $db.sslmode }}
+{{- printf "postgresql://%s:%s@%s:%v/%s?%s" (include "harnis.urlEscape" $db.ownerUser) (include "harnis.urlEscape" $db.ownerPassword) $db.host $db.port $db.database (include "harnis.dbUrlParams" .) }}
 {{- end }}
 {{- end }}
 
@@ -244,10 +254,30 @@ volumes:
     emptyDir:
       medium: Memory
       sizeLimit: 32Mi
+{{- include "harnis.dbCaVolume" . }}
+{{- end }}
+
+{{/* The database CA bundle (externalDatabase.caSecret) as a volume / mount. */}}
+{{- define "harnis.dbCaVolume" -}}
+{{- with .Values.externalDatabase.caSecret }}{{ if .name }}
+  - name: db-ca
+    secret:
+      secretName: {{ .name }}
+      defaultMode: 0444
+{{- end }}{{ end }}
+{{- end }}
+
+{{- define "harnis.dbCaVolumeMount" -}}
+{{- with .Values.externalDatabase.caSecret }}{{ if .name }}
+  - name: db-ca
+    mountPath: /etc/harnis/db-ca
+    readOnly: true
+{{- end }}{{ end }}
 {{- end }}
 
 {{- define "harnis.jobVolumeMounts" -}}
 volumeMounts:
   - name: tmp
     mountPath: /tmp
+{{- include "harnis.dbCaVolumeMount" . }}
 {{- end }}

@@ -86,7 +86,8 @@ def license_of(dist: metadata.Distribution) -> str:
         return expr.strip()
     classifiers = [_CLASSIFIER.match(c).group(1) for c in md.get_all("Classifier") or [] if _CLASSIFIER.match(c)]
     lic = (md.get("License") or "").strip()
-    if lic and "\n" not in lic and len(lic) <= 80 and lic.upper() != "UNKNOWN":
+    named = re.search(r"MIT|BSD|Apache|GPL|MPL|PSF|ISC|Unlicense|Zlib|CC0|Python", lic, re.I)
+    if lic and "\n" not in lic and len(lic) <= 80 and lic.upper() != "UNKNOWN" and (named or not classifiers):
         return lic
     if classifiers:
         return "; ".join(dict.fromkeys(classifiers))

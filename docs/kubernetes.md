@@ -51,10 +51,10 @@ python tasks.py k8s-down
 ## 1. Build and push the images
 
 ```bash
-docker build -t registry.example.com/harnis:1.0.2 .
-docker build -f Dockerfile.sandbox -t registry.example.com/harnis-sandbox:1.0.2 .
-docker push registry.example.com/harnis:1.0.2
-docker push registry.example.com/harnis-sandbox:1.0.2
+docker build -t registry.example.com/harnis:1.1.0 .
+docker build -f Dockerfile.sandbox -t registry.example.com/harnis-sandbox:1.1.0 .
+docker push registry.example.com/harnis:1.1.0
+docker push registry.example.com/harnis-sandbox:1.1.0
 ```
 
 The API image must include the `kubernetes` Python package (the `k8s` extra).
@@ -141,10 +141,43 @@ install and upgrade, and `DATABASE_URL` must use the same one.
 
 Size connections: each API replica opens up to `DB_POOL_MAX` (default 10)
 connections, so `maxReplicas x DB_POOL_MAX` plus jobs must fit under the
-server's `max_connections`. If you put a pooler such as PgBouncer in front,
-session pooling is the safe choice; test transaction pooling with your
-pooler version before relying on it (psycopg uses server-side prepared
-statements for repeated queries).
+server's `max_connections`. A pooler such as PgBouncer works in session or
+transaction mode with the default driver (pgtern uses only unnamed prepared
+statements). Each transaction sets its tenant with `set_config(..., true)`,
+which is local to the transaction, so transaction pooling is safe for tenant
+isolation. With `driver: psycopg`, test transaction pooling with your pooler
+version first (psycopg prepares repeated queries on the server).
+
+**Driver.** Harnis talks to PostgreSQL through
+[pgtern](https://pypi.org/project/pgtern/) (pure Python, Apache-2.0) by
+default. psycopg 3 (LGPL-3.0) remains available: build the image with
+`--build-arg EXTRAS=k8s,psycopg` and set `externalDatabase.driver: psycopg`
+(`DB_DRIVER=psycopg`).
+
+**Encrypted connections.** Use `sslmode: verify-full` against a managed
+database, and give Harnis your provider's CA bundle in a Secret:
+
+```bash
+kubectl -n harnis create secret generic harnis-db-ca --from-file=ca.pem=./provider-ca-bundle.pem
+```
+
+```yaml
+externalDatabase:
+  sslmode: verify-full
+  caSecret:
+    name: harnis-db-ca
+```
+
+The chart mounts it read-only at `/etc/harnis/db-ca` in the API, the
+migration Job and the maintenance CronJob, and adds
+`sslrootcert=/etc/harnis/db-ca/ca.pem` to the database URLs it builds (if you
+set `url`/`migrationUrl` yourself, add it there). Without `sslrootcert`,
+pgtern checks against the image's system CA store.
+On Python 3.13 and newer, pgtern applies strict X.509 checks: the CA
+certificate must carry the key usage extension (current RDS, Cloud SQL and
+Azure bundles do). If an older private CA is refused with "CA cert does not
+include key usage extension", reissue it or use `driver: psycopg`.
+`sslmode: require` encrypts without checking the certificate.
 
 ## 4. Secrets
 
@@ -222,11 +255,11 @@ A minimal production values file (`values-prod.yaml`):
 ```yaml
 image:
   repository: registry.example.com/harnis
-  tag: "1.0.2"
+  tag: "1.1.0"
 sandbox:
   image:
     repository: registry.example.com/harnis-sandbox
-    tag: "1.0.2"
+    tag: "1.1.0"
   runtimeClassName: gvisor
   nodeSelector: {harnis.dev/pool: sandbox}
   tolerations:
@@ -382,7 +415,7 @@ the Pod is replaced.
 * **Traces**: set `config.OTEL_ENABLED: "true"` and
   `OTEL_EXPORTER_OTLP_ENDPOINT` to an OpenTelemetry Collector (OTLP/gRPC,
   plaintext inside the cluster; the collector handles TLS to your backend).
-  Spans cover FastAPI, psycopg, Redis, model calls (`gen_ai.*`) and
+  Spans cover FastAPI, PostgreSQL statements, Redis, model calls (`gen_ai.*`) and
   `harnis.sandbox.run`, which on Kubernetes also carries
   `harnis.sandbox.backend`, `harnis.sandbox.k8s.namespace`,
   `harnis.sandbox.k8s.pod` and `harnis.sandbox.k8s.runtime_class`. Prompts,

@@ -213,8 +213,19 @@ externalDatabase:
   host: ""
   port: 5432
   database: harnis
-  # libpq sslmode: require / verify-full for managed services.
+  # sslmode: require (encrypt) or verify-full (encrypt and check the server's
+  # certificate and name; add sslrootcert=<CA file> through `url`, see docs).
   sslmode: require
+  # CA bundle for sslmode verify-full / verify-ca, from a Secret you create:
+  #   kubectl -n harnis create secret generic harnis-db-ca --from-file=ca.pem=<provider CA bundle>
+  # Mounted read-only at /etc/harnis/db-ca in the API and the jobs; the URLs
+  # the chart builds get sslrootcert (add it yourself to `url`/`migrationUrl`).
+  caSecret:
+    name: ""
+    key: ca.pem
+  # PostgreSQL driver: pgtern (default, in the published image) or psycopg
+  # (needs an image built with --build-arg EXTRAS=k8s,psycopg).
+  driver: pgtern
   # Password for the harnis_app role (APP_DB_PASSWORD). Required.
   appPassword: ""
   # Owner / migration role (must be able to create roles).

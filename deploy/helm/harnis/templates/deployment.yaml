@@ -108,6 +108,7 @@ spec:
               mountPath: /tmp
             - name: workspaces
               mountPath: {{ .Values.workspaces.mountPath }}
+            {{- include "harnis.dbCaVolumeMount" . | indent 10 }}
             {{- with $api.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -124,6 +125,7 @@ spec:
           emptyDir:
             sizeLimit: {{ .Values.workspaces.emptyDirSizeLimit }}
           {{- end }}
+        {{- include "harnis.dbCaVolume" . | indent 6 }}
         {{- with $api.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
