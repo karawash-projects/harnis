@@ -4,7 +4,7 @@
 
 * OTLP/gRPC export to any collector (Jaeger locally; Tempo, Datadog, ... in
   production) — switch backends by changing OTEL_EXPORTER_OTLP_ENDPOINT only.
-* Auto-instrumentation for FastAPI, psycopg and Redis, so DB and cache spans
+* Auto-instrumentation for FastAPI, Postgres and Redis, so DB and cache spans
   appear under each request without hand-written spans.
 * GenAI semantic-convention attributes (gen_ai.*) are set in llm/router.py.
 * `LatencyAlertProcessor` watches finished spans and raises an alert when a
@@ -148,10 +148,9 @@ def setup_tracing(settings, alert=None, app=None) -> TracerProvider | None:
 
     if settings.otel_enabled:
         try:
-            from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
             from opentelemetry.instrumentation.redis import RedisInstrumentor
 
-            PsycopgInstrumentor().instrument(enable_commenter=False)
+            _instrument_postgres()
             RedisInstrumentor().instrument()
             _guard_redis_search_attributes()
             if app is not None:
@@ -161,3 +160,49 @@ def setup_tracing(settings, alert=None, app=None) -> TracerProvider | None:
         except Exception as exc:  # instrumentation is best-effort
             log.warning("auto-instrumentation unavailable: %s", exc)
     return provider
+
+_pg_hook_installed = False
+
+
+def _instrument_postgres() -> None:
+    """One client span per statement (OpenTelemetry database conventions).
+    psycopg: its OpenTelemetry instrumentation. pgtern: a query hook; pgtern
+    never passes bound parameter values to hooks, so none are recorded."""
+    global _pg_hook_installed
+    if _pg_hook_installed:
+        return
+    from . import pg
+
+    if pg.driver().name == "psycopg":
+        from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
+
+        PsycopgInstrumentor().instrument(enable_commenter=False)
+        _pg_hook_installed = True
+        return
+    from contextlib import contextmanager
+
+    pgtern = pg.driver().module
+    from opentelemetry.trace import SpanKind, Status, StatusCode
+
+    tracer = trace.get_tracer("harnis.db")
+
+    @contextmanager
+    def span(info):
+        verb = (info.statement.split(None, 1) or ["SQL"])[0].upper()
+        with tracer.start_as_current_span(f"{verb} {info.dbname}", kind=SpanKind.CLIENT) as sp:
+            sp.set_attribute("db.system", "postgresql")
+            sp.set_attribute("db.name", info.dbname)
+            sp.set_attribute("db.user", info.user)
+            sp.set_attribute("db.statement", info.statement)
+            sp.set_attribute("server.address", info.host)
+            sp.set_attribute("server.port", info.port)
+            try:
+                yield
+            except BaseException as exc:
+                sp.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+                raise
+            if info.rowcount >= 0:
+                sp.set_attribute("db.response.returned_rows", info.rowcount)
+
+    pgtern.add_query_hook(span)
+    _pg_hook_installed = True

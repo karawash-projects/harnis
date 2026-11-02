@@ -5,10 +5,8 @@ restore into it, and check everything is back and usable."""
 import shutil
 import uuid
 
-import psycopg
+from harnis import pg as pgdrv
 import pytest
-from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
 
 from harnis.backup import create, restore, verify
 from harnis.migrate import apply_migrations, create_tenant
@@ -24,13 +22,13 @@ def db():
     if not _pg_available() or not shutil.which("pg_dump"):
         pytest.skip("needs Postgres and pg_dump/pg_restore on PATH (python tasks.py backup uses the container's)")
     name = "harnis_backup_" + uuid.uuid4().hex[:8]
-    with psycopg.connect(f"{OWNER_DSN_BASE}/postgres", autocommit=True) as c:
+    with pgdrv.connect(f"{OWNER_DSN_BASE}/postgres", autocommit=True) as c:
         c.execute(f'CREATE DATABASE "{name}"')
     owner = f"{OWNER_DSN_BASE}/{name}"
     apply_migrations(owner, app_password="harnis_app")
     create_tenant("acme", "Acme", ["mock"], dsn=owner)
     yield owner, f"postgresql://harnis_app:harnis_app@{OWNER_DSN_BASE.split('@', 1)[1]}/{name}"
-    with psycopg.connect(f"{OWNER_DSN_BASE}/postgres", autocommit=True) as c:
+    with pgdrv.connect(f"{OWNER_DSN_BASE}/postgres", autocommit=True) as c:
         c.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
@@ -39,7 +37,7 @@ def test_backup_and_restore_drill(db, tmp_path):
     ws = tmp_path / "ws"
     (ws / "acme" / "sess_x").mkdir(parents=True)
     (ws / "acme" / "sess_x" / "calc.py").write_text("def add(a, b):\n    return a + b\n")
-    pool = ConnectionPool(app, kwargs={"row_factory": dict_row}, min_size=1, max_size=2, open=True)
+    pool = pgdrv.ConnectionPool(app, kwargs={"row_factory": pgdrv.dict_row}, min_size=1, max_size=2, open=True)
     try:
         store = PgStore(pool)
         rec = store.create_session("acme", "alice")
@@ -50,7 +48,7 @@ def test_backup_and_restore_drill(db, tmp_path):
         assert manifest["tenants"] == 1 and manifest["migrations"][-1].startswith("006")
 
         # Disaster: data deleted, files lost, a tampered backup is refused.
-        with psycopg.connect(owner, autocommit=True) as c:
+        with pgdrv.connect(owner, autocommit=True) as c:
             c.execute("SELECT set_config('app.tenant_id', 'acme', false)")
             c.execute("DELETE FROM sessions")
         shutil.rmtree(ws)
@@ -63,7 +61,7 @@ def test_backup_and_restore_drill(db, tmp_path):
         result = restore(backup, owner, ws, app_password="harnis_app")
         assert result["migrations_applied"] == []
         pool.close()
-        pool = ConnectionPool(app, kwargs={"row_factory": dict_row}, min_size=1, max_size=2, open=True)
+        pool = pgdrv.ConnectionPool(app, kwargs={"row_factory": pgdrv.dict_row}, min_size=1, max_size=2, open=True)
         store = PgStore(pool)
         assert store.load_session("acme", rec.session_id).user_id == "alice"
         assert (ws / "acme" / "sess_x" / "calc.py").read_text().startswith("def add")

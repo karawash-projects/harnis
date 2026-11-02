@@ -24,15 +24,15 @@ import shutil
 import time
 from pathlib import Path
 
-import psycopg
 
+from . import pg
 from .config import get_settings
 
 log = logging.getLogger(__name__)
 ORPHAN_MIN_AGE_SECONDS = 3600  # never touch a workspace younger than this (session being created)
 
 
-def sweep_workspaces(conn: psycopg.Connection, workspaces: Path, now: float | None = None) -> int:
+def sweep_workspaces(conn: pg.Connection, workspaces: Path, now: float | None = None) -> int:
     """Delete workspace folders whose session no longer exists."""
     if not workspaces.is_dir():
         return 0
@@ -64,7 +64,7 @@ def run(dsn: str | None = None, workspaces: str | None = None, session_days: int
     session_days = s.retention_session_days if session_days is None else session_days
     audit_days = s.retention_audit_days if audit_days is None else audit_days
     report = {"retention_deleted_sessions": 0, "orphan_workspaces_removed": 0}
-    with psycopg.connect(dsn, autocommit=True) as conn:
+    with pg.connect(dsn, autocommit=True) as conn:
         conn.execute("SELECT ensure_ledger_partitions(3)")
         if session_days or audit_days:
             rows = conn.execute("SELECT * FROM harnis_apply_retention(%s, %s)",

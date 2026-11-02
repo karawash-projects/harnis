@@ -9,7 +9,7 @@ import uuid
 from decimal import Decimal
 from typing import Any
 
-from psycopg.types.json import Jsonb
+from . import pg
 
 from .db import tenant_tx
 from .orchestrator import ConflictError, SessionRecord, new_state
@@ -36,7 +36,7 @@ class PgStore:
         with self._tx(tenant_id) as conn:
             conn.execute(
                 "INSERT INTO sessions (session_id, tenant_id, user_id, state) VALUES (%s, %s, %s, %s)",
-                (sid, tenant_id, user_id, Jsonb(new_state())))
+                (sid, tenant_id, user_id, pg.Jsonb(new_state())))
         return SessionRecord(sid, tenant_id, user_id, "idle", "ingest", new_state(), 0)
 
     def load_session(self, tenant_id: str, session_id: str) -> SessionRecord | None:
@@ -55,7 +55,7 @@ class PgStore:
                 "UPDATE sessions SET status = %s, current_node = %s, state = %s,"
                 " version = version + 1, updated_at = now()"
                 " WHERE session_id = %s AND version = %s RETURNING version",
-                (rec.status, rec.current_node, Jsonb(rec.state), rec.session_id, rec.version)).fetchone()
+                (rec.status, rec.current_node, pg.Jsonb(rec.state), rec.session_id, rec.version)).fetchone()
         if row is None:
             raise ConflictError(f"session {rec.session_id} changed concurrently (expected v{rec.version})")
         return row["version"]
@@ -77,11 +77,11 @@ class PgStore:
             row = conn.execute(
                 "INSERT INTO approvals (tenant_id, session_id, requested_by, action, action_hash, expires_at)"
                 " VALUES (%s, %s, %s, %s, %s, now() + make_interval(secs => %s)) RETURNING approval_id",
-                (tenant_id, session_id, requested_by, Jsonb(action), action_hash, self.approval_ttl)).fetchone()
+                (tenant_id, session_id, requested_by, pg.Jsonb(action), action_hash, self.approval_ttl)).fetchone()
             conn.execute(
                 "INSERT INTO audit_log (tenant_id, session_id, actor, event_type, detail)"
                 " VALUES (%s, %s, %s, 'approval_requested', %s)",
-                (tenant_id, session_id, requested_by, Jsonb({"tool": action.get("tool"), "action_hash": action_hash})))
+                (tenant_id, session_id, requested_by, pg.Jsonb({"tool": action.get("tool"), "action_hash": action_hash})))
         return str(row["approval_id"])
 
     def list_approvals(self, tenant_id: str, status: str = "pending") -> list[dict[str, Any]]:
@@ -122,7 +122,7 @@ class PgStore:
                 "INSERT INTO audit_log (tenant_id, session_id, actor, event_type, detail)"
                 " VALUES (%s, %s, %s, %s, %s)",
                 (tenant_id, row["session_id"], decided_by, f"approval_{status}",
-                 Jsonb({"approval_id": approval_id, "action_hash": action_hash})))
+                 pg.Jsonb({"approval_id": approval_id, "action_hash": action_hash})))
         return row, effective
 
     # -- ledger, metrics, audit ---------------------------------------------------
@@ -146,7 +146,7 @@ class PgStore:
         with self._tx(tenant_id) as conn:
             conn.execute(
                 "INSERT INTO audit_log (tenant_id, session_id, actor, event_type, detail)"
-                " VALUES (%s, %s, %s, %s, %s)", (tenant_id, session_id, actor, event_type, Jsonb(detail)))
+                " VALUES (%s, %s, %s, %s, %s)", (tenant_id, session_id, actor, event_type, pg.Jsonb(detail)))
 
     def usage_by_model(self, tenant_id: str) -> list[dict[str, Any]]:
         with self._tx(tenant_id) as conn:
@@ -216,7 +216,7 @@ class PgStore:
                 (key_id, tenant_id, name, secret_hash, roles, created_by, expires_in_days, expires_in_days)
             ).fetchone()
             conn.execute("INSERT INTO audit_log (tenant_id, actor, event_type, detail) VALUES (%s, %s, %s, %s)",
-                         (tenant_id, created_by, "api_key_created", Jsonb({"key_id": key_id, "roles": roles})))
+                         (tenant_id, created_by, "api_key_created", pg.Jsonb({"key_id": key_id, "roles": roles})))
         return row
 
     def list_api_keys(self, tenant_id: str) -> list[dict[str, Any]]:
@@ -231,7 +231,7 @@ class PgStore:
                                (key_id,))
             if cur.rowcount:
                 conn.execute("INSERT INTO audit_log (tenant_id, actor, event_type, detail) VALUES (%s, %s, %s, %s)",
-                             (tenant_id, actor, "api_key_revoked", Jsonb({"key_id": key_id})))
+                             (tenant_id, actor, "api_key_revoked", pg.Jsonb({"key_id": key_id})))
             return cur.rowcount == 1
 
     # -- platform administration ---------------------------------------------------
@@ -292,7 +292,6 @@ class PgStore:
 
     def delete_tenant(self, tenant_id: str, actor: str) -> dict[str, Any] | None:
         """Deletes a disabled tenant and all its data. Raises ValueError if it is active."""
-        import psycopg
 
         with self._platform() as conn:
             try:
@@ -300,8 +299,8 @@ class PgStore:
                     r = conn.execute("SELECT harnis_delete_tenant(%s) AS r", (tenant_id,)).fetchone()["r"]
                     if r is not None:
                         conn.execute("INSERT INTO platform_audit (actor, event_type, detail) VALUES (%s, %s, %s)",
-                                     (actor, "tenant_deleted", Jsonb(r)))
-            except psycopg.errors.ObjectInUse as exc:
+                                     (actor, "tenant_deleted", pg.Jsonb(r)))
+            except pg.errors.ObjectInUse as exc:
                 raise ValueError(str(exc).split("\n")[0]) from exc
         self._policy_cache.pop(tenant_id, None)
         return r

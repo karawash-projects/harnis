@@ -15,31 +15,30 @@ from __future__ import annotations
 import argparse
 from importlib import resources
 
-import psycopg
-from psycopg import sql
 
+from . import pg
 from .config import get_settings
 
 
-def _ensure_roles(conn: psycopg.Connection, app_password: str) -> None:
+def _ensure_roles(conn: pg.Connection, app_password: str) -> None:
     exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = 'harnis_app'").fetchone()
     if exists:
-        conn.execute(sql.SQL("ALTER ROLE harnis_app WITH LOGIN PASSWORD {}").format(sql.Literal(app_password)))
+        conn.execute(pg.sql.SQL("ALTER ROLE harnis_app WITH LOGIN PASSWORD {}").format(pg.sql.Literal(app_password)))
     else:
-        conn.execute(sql.SQL("CREATE ROLE harnis_app LOGIN PASSWORD {}").format(sql.Literal(app_password)))
+        conn.execute(pg.sql.SQL("CREATE ROLE harnis_app LOGIN PASSWORD {}").format(pg.sql.Literal(app_password)))
     # Never let the app role bypass RLS, whatever someone did by hand earlier.
     conn.execute("ALTER ROLE harnis_app NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB")
     if not conn.execute("SELECT 1 FROM pg_roles WHERE rolname = 'harnis_analytics'").fetchone():
         conn.execute("CREATE ROLE harnis_analytics NOLOGIN NOBYPASSRLS")
     # The migrator must be able to SET ROLE harnis_analytics (needed on
     # managed Postgres where the migrator is not a superuser).
-    conn.execute(sql.SQL("GRANT harnis_analytics TO {}").format(sql.Identifier(conn.info.user)))
+    conn.execute(pg.sql.SQL("GRANT harnis_analytics TO {}").format(pg.sql.Identifier(conn.info.user)))
     if not conn.execute("SELECT 1 FROM pg_roles WHERE rolname = 'harnis_platform'").fetchone():
         conn.execute("CREATE ROLE harnis_platform NOLOGIN NOBYPASSRLS")
-    conn.execute(sql.SQL("GRANT harnis_platform TO {}").format(sql.Identifier(conn.info.user)))
+    conn.execute(pg.sql.SQL("GRANT harnis_platform TO {}").format(pg.sql.Identifier(conn.info.user)))
     if not conn.execute("SELECT 1 FROM pg_roles WHERE rolname = 'harnis_lifecycle'").fetchone():
         conn.execute("CREATE ROLE harnis_lifecycle NOLOGIN NOBYPASSRLS")
-    conn.execute(sql.SQL("GRANT harnis_lifecycle TO {}").format(sql.Identifier(conn.info.user)))
+    conn.execute(pg.sql.SQL("GRANT harnis_lifecycle TO {}").format(pg.sql.Identifier(conn.info.user)))
 
 
 def apply_migrations(dsn: str | None = None, app_password: str | None = None,
@@ -50,7 +49,7 @@ def apply_migrations(dsn: str | None = None, app_password: str | None = None,
     settings = get_settings()
     dsn = dsn or settings.migration_database_url
     applied: list[str] = []
-    with psycopg.connect(dsn, autocommit=True) as conn:
+    with pg.connect(dsn, autocommit=True) as conn:
         _ensure_roles(conn, app_password or settings.app_db_password)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS schema_migrations ("
@@ -78,7 +77,7 @@ def create_tenant(tenant_id: str, name: str, allowed_providers: list[str] | None
     """Admin operation, runs as owner. FORCE RLS applies to the owner too, so we
     set the tenant context to the tenant being created."""
     dsn = dsn or get_settings().migration_database_url
-    with psycopg.connect(dsn) as conn, conn.transaction():
+    with pg.connect(dsn) as conn, conn.transaction():
         conn.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
         conn.execute(
             "INSERT INTO tenants (tenant_id, name, allowed_providers) VALUES (%s, %s, %s)"

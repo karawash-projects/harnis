@@ -113,8 +113,8 @@ REDIS_URL = os.getenv("TEST_REDIS_URL", "redis://127.0.0.1:6379/15")
 
 def _pg_available() -> bool:
     try:
-        import psycopg
-        with psycopg.connect(f"{OWNER_DSN_BASE}/postgres", connect_timeout=2):
+        from harnis import pg as pgdrv
+        with pgdrv.connect(f"{OWNER_DSN_BASE}/postgres", connect_timeout=2):
             return True
     except Exception:
         return False
@@ -124,11 +124,11 @@ def _pg_available() -> bool:
 def pg():
     if not _pg_available():
         pytest.skip("Postgres not reachable (run `python tasks.py up`)")
-    import psycopg
+    from harnis import pg as pgdrv
     from harnis.migrate import apply_migrations, create_tenant
 
     name = "harnis_test_" + uuid.uuid4().hex[:8]
-    with psycopg.connect(f"{OWNER_DSN_BASE}/postgres", autocommit=True) as c:
+    with pgdrv.connect(f"{OWNER_DSN_BASE}/postgres", autocommit=True) as c:
         c.execute(f'CREATE DATABASE "{name}"')
     owner_dsn = f"{OWNER_DSN_BASE}/{name}"
     apply_migrations(owner_dsn, app_password="harnis_app")
@@ -137,16 +137,15 @@ def pg():
     host = OWNER_DSN_BASE.split("@", 1)[1]
     app_dsn = f"postgresql://harnis_app:harnis_app@{host}/{name}"
     yield {"owner": owner_dsn, "app": app_dsn, "name": name}
-    with psycopg.connect(f"{OWNER_DSN_BASE}/postgres", autocommit=True) as c:
+    with pgdrv.connect(f"{OWNER_DSN_BASE}/postgres", autocommit=True) as c:
         c.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
 @pytest.fixture(scope="session")
 def app_pool(pg):
-    from psycopg.rows import dict_row
-    from psycopg_pool import ConnectionPool
+    from harnis import pg as pgdrv
 
-    pool = ConnectionPool(pg["app"], min_size=1, max_size=4, kwargs={"row_factory": dict_row}, open=True)
+    pool = pgdrv.ConnectionPool(pg["app"], min_size=1, max_size=4, kwargs={"row_factory": pgdrv.dict_row}, open=True)
     yield pool
     pool.close()
 

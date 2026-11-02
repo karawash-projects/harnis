@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://harnis_app:harnis_app@127.0.0.1:5432/harnis"
     migration_database_url: str = "postgresql://postgres:postgres@127.0.0.1:5432/harnis"
     app_db_password: str = "harnis_app"
+    # PostgreSQL driver: "pgtern" (default, Apache-2.0) or "psycopg" (LGPL-3.0,
+    # needs `pip install "harnis[psycopg]"`).
+    db_driver: Literal["pgtern", "psycopg"] = "pgtern"
     db_pool_min: int = 1
     db_pool_max: int = 10
 

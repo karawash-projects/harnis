@@ -19,11 +19,11 @@ def test_lists_runtime_dependencies_with_licenses():
     tpl = _load()
     dists = tpl.collect()
     names = {d.metadata["Name"].lower() for d in dists}
-    assert {"fastapi", "psycopg", "redis", "pyjwt"} <= names
+    assert {"fastapi", "pgtern", "redis", "pyjwt"} <= names
     assert "harnis" not in names
-    assert not names & {"pytest", "fakeredis", "mkdocs", "build"}  # dev, test and docs tools stay out
+    assert not names & {"pytest", "fakeredis", "mkdocs", "build", "psycopg"}  # dev, docs and optional extras stay out
     text = tpl.render(dists)
     assert text.startswith("# Third-party licenses")
-    assert "| psycopg |" in text and "LGPL" in text
+    assert "| pgtern |" in text and "LGPL" not in text  # every required runtime dependency is permissive
     rows = [line for line in text.splitlines() if line.startswith("| ") and not line.startswith("| Package")]
     assert len(rows) == len(dists) and all(r.split("|")[3].strip() for r in rows)  # every row has a license
