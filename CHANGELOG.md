@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Release workflow: `docker/login-action` v4 (Node 24 runtime), which clears the Node.js 20 deprecation warning on release runs.
 - The local stack (`tasks.py up`), the local kind cluster and CI use Valkey 9.0 (BSD-3-Clause) instead of Redis Stack (RSALv2 / SSPLv1), so every component of the default setup is under an open-source license. Without a search engine the semantic cache uses its brute-force fallback; Redis 8 or Redis Stack still give it a vector index, and the docs explain the license difference.
 - NOTICE points to the source of the Debian packages in the published container images.
+- CI runs the macOS unit tests on Python 3.13 only (Linux and Windows still cover 3.11 and 3.13): GitHub's macOS runners were repeatedly unavailable, which cancelled jobs.
 
 ### Added
 - `tests/test_cache_backends.py`: the semantic cache against real servers, on a vector index (Redis 8) and on the fallback (Valkey); both run in CI.

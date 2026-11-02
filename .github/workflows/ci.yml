@@ -17,6 +17,10 @@ jobs:
         # so they stay as they are; Linux runs on a pinned image.
         os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.11", "3.13"]
+        # GitHub's macOS runners are often short of capacity, so macOS runs one
+        # Python version; Linux and Windows cover both.
+        exclude:
+          - { os: macos-latest, python: "3.11" }
     runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-24.04' || matrix.os }}
     steps:
       - uses: actions/checkout@v7
