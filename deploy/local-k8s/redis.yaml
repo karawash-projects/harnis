@@ -1,5 +1,6 @@
-# Throwaway Redis Stack (RediSearch enables the vector cache) for the local
-# kind cluster ONLY: no password, no persistence. Same image as docker-compose.yml.
+# Throwaway Valkey (BSD-3-Clause; Harnis uses it as Redis) for the local kind
+# cluster ONLY: no password, no persistence. Same image as docker-compose.yml.
+# The semantic cache uses its brute-force fallback (no search engine).
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -31,7 +32,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: redis
-          image: redis/redis-stack-server:7.4.0-v1
+          image: valkey/valkey:9.0.7-alpine
           imagePullPolicy: IfNotPresent
           ports:
             - name: redis
@@ -39,14 +40,14 @@ spec:
               protocol: TCP
           readinessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["valkey-cli", "ping"]
             initialDelaySeconds: 2
             periodSeconds: 3
             timeoutSeconds: 3
             failureThreshold: 20
           livenessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["valkey-cli", "ping"]
             initialDelaySeconds: 20
             periodSeconds: 10
             timeoutSeconds: 5

@@ -174,7 +174,7 @@ def image_id(ref: str) -> str:
 def load_images(preload_deps: bool) -> None:
     run("kind", "load", "docker-image", API_IMAGE, SANDBOX_IMAGE, "--name", CLUSTER)
     if preload_deps:  # optional: saves the node from pulling (Docker Hub rate limits, slow links)
-        for ref in ("postgres:16-alpine", "redis/redis-stack-server:7.4.0-v1"):
+        for ref in ("postgres:16-alpine", "valkey/valkey:9.0.7-alpine"):
             if quiet("docker", "image", "inspect", ref).returncode != 0:
                 run("docker", "pull", ref, check=False)
             r = run("kind", "load", "docker-image", ref, "--name", CLUSTER, check=False)

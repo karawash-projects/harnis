@@ -236,8 +236,9 @@ externalDatabase:
   url: ""
   migrationUrl: ""
 
-# Redis 7+ / Redis Stack (RediSearch enables the vector cache; plain Redis
-# works with a brute-force fallback).
+# Redis 7+ or Valkey. A search engine (Redis 8, Redis Stack) gives the semantic
+# cache a vector index; without one (Valkey, plain Redis) it uses a brute-force
+# fallback.
 externalRedis:
   host: ""
   port: 6379

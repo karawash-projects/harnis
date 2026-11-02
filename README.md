@@ -62,7 +62,7 @@ Every step goes through `tasks.py`, a standard-library task runner, so there's n
 
 ```bash
 python tasks.py install          # .venv + dependencies (on Windows: py tasks.py install)
-python tasks.py up               # Postgres, Redis Stack, Jaeger; migrations; demo tenants "acme" and "globex"
+python tasks.py up               # Postgres, Valkey (Redis-compatible), Jaeger; migrations; demo tenants "acme" and "globex"
 python tasks.py sandbox-image    # the image agent commands run in
 python tasks.py dev              # API on http://127.0.0.1:8000
 ```

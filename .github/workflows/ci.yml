@@ -36,8 +36,15 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 20
       redis:
-        image: redis/redis-stack-server:7.4.0-v1
+        # Valkey, as in the local stack (the cache's brute-force fallback).
+        image: valkey/valkey:9.0.7-alpine
         ports: ["6379:6379"]
+        options: >-
+          --health-cmd "valkey-cli ping" --health-interval 2s --health-timeout 3s --health-retries 20
+      redis-search:
+        # Redis 8 (search engine included), only for the cache's vector-index path.
+        image: redis:8.4
+        ports: ["6380:6379"]
         options: >-
           --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 3s --health-retries 20
     steps:
@@ -47,6 +54,13 @@ jobs:
       - run: python tasks.py install
       - run: python tasks.py sandbox-image
       - run: python tasks.py test all
+      - name: semantic cache on a vector index (Redis 8) and on the fallback (Valkey)
+        env:
+          HARNIS_TEST_VECTOR_REDIS_URL: redis://localhost:6380/0
+          HARNIS_TEST_PLAIN_REDIS_URL: redis://localhost:6379/0
+        run: |
+          .venv/bin/python -m pytest -v -rs tests/test_cache_backends.py -p no:cacheprovider | tee cache.log
+          grep -q " 2 passed" cache.log && ! grep -q "skipped" cache.log
       # The optional psycopg driver (DB_DRIVER=psycopg) keeps passing the same suite.
       - name: integration tests on the psycopg driver
         env: { DB_DRIVER: psycopg }

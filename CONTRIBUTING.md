@@ -16,7 +16,7 @@ You need Python 3.11 or newer and Docker (Docker Desktop on Windows and macOS, D
 
 ```bash
 python tasks.py install          # creates .venv and installs harnis with the dev extras (editable)
-python tasks.py up               # Postgres, Redis Stack, Jaeger; runs migrations; seeds demo tenants
+python tasks.py up               # Postgres, Valkey, Jaeger; runs migrations; seeds demo tenants
 python tasks.py sandbox-image    # builds harnis-sandbox:latest, the image agent commands run in
 python tasks.py dev              # API with auto-reload on http://127.0.0.1:8000
 ```
