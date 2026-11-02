@@ -33,9 +33,9 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
-import psycopg
 
 from . import __version__
+from . import pg
 from .config import get_settings
 
 
@@ -71,7 +71,7 @@ def create(out_dir: Path, dsn: str, workspaces: Path, pg_bin: str = "") -> Path:
     with tarfile.open(archive, "w:gz") as tar:
         if workspaces.is_dir():
             tar.add(workspaces, arcname="workspaces", filter=lambda ti: None if ti.issym() or ti.islnk() else ti)
-    with psycopg.connect(dsn) as conn:
+    with pg.connect(dsn) as conn:
         migrations = [r[0] for r in conn.execute("SELECT name FROM schema_migrations ORDER BY name")]
         tenants = conn.execute("SELECT count(*) FROM harnis_admin_list_tenants()").fetchone()[0]
     manifest = {"harnis_version": __version__, "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -95,7 +95,7 @@ def restore(backup: Path, dsn: str, workspaces: Path, pg_bin: str = "", app_pass
 
     manifest = verify(backup)
     prefix = shlex.split(pg_bin)
-    with psycopg.connect(dsn, autocommit=True) as conn:
+    with pg.connect(dsn, autocommit=True) as conn:
         _ensure_roles(conn, app_password or get_settings().app_db_password)  # roles are cluster-wide
         # Restore into an empty schema. (`pg_restore --clean` can't drop the
         # inherited constraints of the partitioned token ledger.)
@@ -134,7 +134,7 @@ def restore(backup: Path, dsn: str, workspaces: Path, pg_bin: str = "", app_pass
                 if src is not None:
                     dest.write_bytes(src.read())
     newer = apply_migrations(dsn, app_password=app_password)
-    with psycopg.connect(dsn, autocommit=True) as conn:
+    with pg.connect(dsn, autocommit=True) as conn:
         conn.execute("SET ROLE harnis_analytics")
         conn.execute("SELECT refresh_analytics()")
     return {"restored_from": str(backup), "backup_version": manifest["harnis_version"], "migrations_applied": newer}

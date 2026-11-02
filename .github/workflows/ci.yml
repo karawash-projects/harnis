@@ -47,6 +47,12 @@ jobs:
       - run: python tasks.py install
       - run: python tasks.py sandbox-image
       - run: python tasks.py test all
+      # The optional psycopg driver (DB_DRIVER=psycopg) keeps passing the same suite.
+      - name: integration tests on the psycopg driver
+        env: { DB_DRIVER: psycopg }
+        run: |
+          .venv/bin/python -m pip install -q -e ".[psycopg]"
+          python tasks.py test integration
       - name: red team against a live API
         env: { LLM_PROVIDERS: mock, WORKSPACES_DIR: /tmp/ws }
         run: |
@@ -55,6 +61,37 @@ jobs:
           python tasks.py redteam
           python tasks.py eval -- --providers mock
       - run: docker build -t harnis:ci .
+
+  # Encrypted connections to PostgreSQL with both drivers: sslmode require,
+  # verify-ca and verify-full, an untrusted CA and a wrong host name.
+  postgres-tls:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.13" }
+      - name: TLS-enabled PostgreSQL with test certificates
+        run: |
+          scripts/tls_test_certs.sh "$RUNNER_TEMP/tls"
+          docker run -d --name pg-tls -p 5433:5432 -e POSTGRES_PASSWORD=postgres \
+            -v "$RUNNER_TEMP/tls:/tls:ro" --entrypoint bash postgres:16 -c '
+              cp /tls/server.crt /tls/server.key /var/lib/postgresql/ &&
+              chown postgres /var/lib/postgresql/server.* && chmod 600 /var/lib/postgresql/server.key &&
+              exec docker-entrypoint.sh postgres -c ssl=on \
+                -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key'
+          # TCP, not the socket: during first-time setup a temporary server listens on the socket only.
+          for i in $(seq 1 60); do docker exec pg-tls pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1 && break; sleep 1; done
+          docker exec pg-tls pg_isready -h 127.0.0.1 -U postgres
+      - run: python -m pip install -q -e ".[dev,psycopg]"
+      - name: TLS tests (pgtern and psycopg)
+        env:
+          HARNIS_TEST_TLS_DSN: postgresql://postgres:postgres@localhost:5433/postgres
+          HARNIS_TEST_TLS_CA: ${{ runner.temp }}/tls/ca.crt
+          HARNIS_TEST_TLS_OTHER_CA: ${{ runner.temp }}/tls/other-ca.crt
+        run: |
+          python -m pytest -v -rs tests/test_pg_tls.py -p no:cacheprovider | tee tls.log
+          # Every case on both drivers must have run: a skip here would hide a missing driver.
+          grep -q " 12 passed" tls.log && ! grep -q "skipped" tls.log
 
   # Every commit in a pull request must carry a Signed-off-by line (see CONTRIBUTING.md).
   dco:
@@ -86,3 +123,40 @@ jobs:
       - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
       - run: helm lint --strict deploy/helm/harnis
+      - name: database CA bundle and driver settings render where they are used
+        run: |
+          set -euo pipefail
+          helm template h deploy/helm/harnis -n harnis \
+            --set externalDatabase.host=db.example --set externalDatabase.appPassword=a \
+            --set externalDatabase.ownerPassword=o --set externalDatabase.sslmode=verify-full \
+            --set externalDatabase.caSecret.name=harnis-db-ca --set externalDatabase.driver=psycopg > out.yaml
+          python3 - <<'PY'
+          import base64, yaml
+          docs = [d for d in yaml.safe_load_all(open("out.yaml")) if d]
+          def pod(d):
+              spec = d["spec"]
+              if d["kind"] == "CronJob":
+                  spec = spec["jobTemplate"]["spec"]
+              return spec["template"]["spec"]
+          name = lambda d: d["metadata"]["name"]
+          api = next(d for d in docs if d["kind"] == "Deployment")
+          migrate = next(d for d in docs if d["kind"] == "Job" and name(d).endswith("migrate"))
+          maint = next(d for d in docs if d["kind"] == "CronJob" and name(d).endswith("maintenance"))
+          for d in (api, migrate, maint):
+              spec = pod(d)
+              assert any(v.get("secret", {}).get("secretName") == "harnis-db-ca" for v in spec["volumes"]), name(d)
+              mounts = spec["containers"][0]["volumeMounts"]
+              assert any(m["name"] == "db-ca" and m["mountPath"] == "/etc/harnis/db-ca" for m in mounts), name(d)
+          secrets = {name(d): d for d in docs if d["kind"] == "Secret"}
+          urls = []
+          for d in secrets.values():
+              for k, v in {**d.get("stringData", {}), **{k: base64.b64decode(v).decode() for k, v in d.get("data", {}).items()}}.items():
+                  if k.endswith("DATABASE_URL"):
+                      urls.append(v)
+          assert len(urls) == 2 and all("sslmode=verify-full&sslrootcert=/etc/harnis/db-ca/ca.pem" in u for u in urls), urls
+          cm = next(d for d in docs if d["kind"] == "ConfigMap" and "DB_DRIVER" in d.get("data", {}))
+          assert cm["data"]["DB_DRIVER"] == "psycopg"
+          env = {e["name"]: e.get("value") for e in pod(migrate)["containers"][0]["env"]}
+          assert env["DB_DRIVER"] == "psycopg"
+          print("ok:", len(docs), "objects")
+          PY

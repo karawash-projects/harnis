@@ -38,6 +38,8 @@ spec:
           env:
             - name: HOME
               value: /tmp
+            - name: DB_DRIVER
+              value: {{ .Values.externalDatabase.driver | default "pgtern" | quote }}
             - name: MIGRATION_DATABASE_URL
               valueFrom:
                 secretKeyRef:

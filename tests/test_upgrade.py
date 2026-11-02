@@ -5,10 +5,8 @@ migrated to the current schema; data survives, the app works against it, and
 migrating again is a no-op."""
 import uuid
 
-import psycopg
+from harnis import pg as pgdrv
 import pytest
-from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
 
 from harnis.migrate import apply_migrations, create_tenant
 from harnis.store import PgStore
@@ -24,11 +22,11 @@ def old_db():
     if not _pg_available():
         pytest.skip("Postgres not reachable")
     name = "harnis_upgrade_" + uuid.uuid4().hex[:8]
-    with psycopg.connect(f"{OWNER_DSN_BASE}/postgres", autocommit=True) as c:
+    with pgdrv.connect(f"{OWNER_DSN_BASE}/postgres", autocommit=True) as c:
         c.execute(f'CREATE DATABASE "{name}"')
     owner = f"{OWNER_DSN_BASE}/{name}"
     yield owner, f"postgresql://harnis_app:harnis_app@{OWNER_DSN_BASE.split('@', 1)[1]}/{name}"
-    with psycopg.connect(f"{OWNER_DSN_BASE}/postgres", autocommit=True) as c:
+    with pgdrv.connect(f"{OWNER_DSN_BASE}/postgres", autocommit=True) as c:
         c.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
@@ -37,7 +35,7 @@ def test_upgrade_keeps_data_and_is_idempotent(old_db):
     applied = apply_migrations(owner, app_password="harnis_app", up_to=FIRST_RELEASE)
     assert applied[-1].startswith(FIRST_RELEASE)
     create_tenant("acme", "Acme", ["mock"], dsn=owner)
-    pool = ConnectionPool(app, kwargs={"row_factory": dict_row}, min_size=1, max_size=2, open=True)
+    pool = pgdrv.ConnectionPool(app, kwargs={"row_factory": pgdrv.dict_row}, min_size=1, max_size=2, open=True)
     try:
         store = PgStore(pool)
         rec = store.create_session("acme", "alice")

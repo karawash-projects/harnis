@@ -6,7 +6,7 @@ import os
 import time
 import uuid
 
-import psycopg
+from harnis import pg as pgdrv
 import pytest
 from fastapi.testclient import TestClient
 
@@ -99,11 +99,11 @@ def test_erasure_deletes_sessions_and_pseudonymizes_history(client, tenant, ws, 
 
 
 def test_app_role_cannot_erase_without_tenant_context_or_run_retention(pg):
-    with psycopg.connect(pg["app"]) as c:
-        with pytest.raises(psycopg.errors.RaiseException):
+    with pgdrv.connect(pg["app"]) as c:
+        with pytest.raises(pgdrv.errors.RaiseException):
             c.execute("SELECT harnis_erase_user('alice', 'x')")
-    with psycopg.connect(pg["app"]) as c:
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+    with pgdrv.connect(pg["app"]) as c:
+        with pytest.raises(pgdrv.errors.InsufficientPrivilege):
             c.execute("SELECT * FROM harnis_apply_retention(1, 1)")
 
 
@@ -132,7 +132,7 @@ def test_retention_and_orphan_sweep(client, tenant, ws, pg, app_pool):
     client.post(f"/v1/sessions/{new_sid}/turns", json={"message": "hours?"}, headers=h("alice", tenant))
     done_sid = client.post("/v1/sessions", json={}, headers=h("alice", tenant)).json()["session_id"]
     client.post(f"/v1/sessions/{done_sid}/turns", json={"message": "hours?"}, headers=h("alice", tenant))
-    with psycopg.connect(pg["owner"], autocommit=True) as c:  # age two sessions (one is awaiting approval)
+    with pgdrv.connect(pg["owner"], autocommit=True) as c:  # age two sessions (one is awaiting approval)
         c.execute("UPDATE sessions SET updated_at = now() - interval '40 days' WHERE session_id = ANY(%s)",
                   ([old_sid, done_sid],))
     orphan = ws / tenant / "sess_orphan0000"

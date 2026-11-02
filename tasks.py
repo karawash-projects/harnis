@@ -255,8 +255,8 @@ def verify_host_postgres() -> None:
     url = read_env().get("MIGRATION_DATABASE_URL")
     if not url:
         return
-    probe = ("import sys, psycopg\n"
-             "with psycopg.connect(sys.argv[1], connect_timeout=5) as c:\n"
+    probe = ("import sys\nfrom harnis import pg\n"
+             "with pg.connect(sys.argv[1], connect_timeout=5) as c:\n"
              "    print(c.execute(\"select current_setting('data_directory')\").fetchone()[0])\n")
     r = subprocess.run([str(PY), "-c", probe, url], capture_output=True, text=True)
     if r.returncode != 0 or r.stdout.strip() != "/var/lib/postgresql/data":

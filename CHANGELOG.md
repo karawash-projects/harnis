@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-02
+
+### Changed
+- **PostgreSQL driver: [pgtern](https://pypi.org/project/pgtern/) replaces psycopg** as the default. pgtern is pure Python with no dependencies and Apache-2.0 licensed, so every required runtime dependency of Harnis is now under a permissive license. Its interface matches psycopg's, parameters are still sent to the server separately (the tenant binding stays server-side), and it uses only unnamed prepared statements, so transaction-mode connection poolers work.
+- psycopg 3 (LGPL-3.0) stays available as an optional driver: `pip install "harnis[psycopg]"` and `DB_DRIVER=psycopg`; for the container image, `--build-arg EXTRAS=k8s,psycopg` and the chart's `externalDatabase.driver: psycopg`. The published image contains pgtern only.
+- Database tracing comes from pgtern's query hooks (one span per statement; bound values are never recorded). With psycopg, its OpenTelemetry instrumentation is used as before.
+
+### Added
+- Helm chart: `externalDatabase.caSecret` mounts a database CA bundle into the API, the migration Job and the maintenance CronJob, and adds `sslrootcert` to the database URLs the chart builds (for `sslmode: verify-full`). `externalDatabase.driver` selects the driver.
+- Tests for encrypted database connections (require, verify-ca, verify-full, untrusted CA, wrong host name, pooled tenant transactions) on both drivers, and a CI job that runs them against a TLS-enabled PostgreSQL. CI also runs the integration suite on psycopg.
+
+### Notes
+- On Python 3.13 and newer, pgtern applies strict X.509 checks: a CA certificate without the key usage extension is refused ("CA cert does not include key usage extension"). Current managed-database CA bundles carry it; reissue an older private CA or use the psycopg driver.
+
 ## [1.0.2] - 2026-11-01
 
 ### Security

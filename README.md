@@ -344,11 +344,11 @@ Contributions are welcome (bug reports, docs, plugins, providers and fixes), wit
 Harnis is provided **"as is", without warranties or conditions of any kind**, and the authors accept no liability for its use (Apache License 2.0, sections 7 and 8). There are no supported versions, no support and no guaranteed fixes. You are free to use, change, extend and redistribute it under the license, and when you do, you are responsible for:
 
 * deploying, configuring, securing and operating it, including the actions agents take in your environment;
-* the third-party software it relies on (Python packages such as the LGPL-licensed `psycopg` Postgres driver, container base images, Postgres, Redis, Kubernetes components) and the model providers and models you use: reviewing their licenses and terms, and obtaining any licenses you need;
+* the third-party software it relies on (Python packages, container base images, Postgres, Redis, Kubernetes components) and the model providers and models you use: reviewing their licenses and terms, and obtaining any licenses you need;
 * the data you send to model providers and your legal and contractual obligations.
 
 ## License
 
 Copyright 2026 Ahmad Karawash. Licensed under the Apache License, Version 2.0; see [LICENSE](https://github.com/karawash-projects/harnis/blob/main/LICENSE) and [NOTICE](https://github.com/karawash-projects/harnis/blob/main/NOTICE).
 
-Harnis runs with third-party packages under their own licenses (mostly Apache 2.0, MIT and BSD; the PostgreSQL driver, psycopg, is LGPL-3.0). [THIRD_PARTY_LICENSES.md](https://github.com/karawash-projects/harnis/blob/main/THIRD_PARTY_LICENSES.md) lists them, and each GitHub Release carries the list for its exact versions (`python tasks.py licenses` regenerates it for your environment).
+Harnis runs with third-party packages under their own licenses, all permissive (Apache 2.0, MIT, BSD and similar; certifi is MPL-2.0). The default PostgreSQL driver is [pgtern](https://pypi.org/project/pgtern/) (Apache-2.0); the optional psycopg driver (`pip install "harnis[psycopg]"`, `DB_DRIVER=psycopg`) is LGPL-3.0. [THIRD_PARTY_LICENSES.md](https://github.com/karawash-projects/harnis/blob/main/THIRD_PARTY_LICENSES.md) lists them, and each GitHub Release carries the list for its exact versions (`python tasks.py licenses` regenerates it for your environment).

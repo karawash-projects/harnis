@@ -289,6 +289,26 @@
             "verify-full"
           ]
         },
+        "driver": {
+          "type": "string",
+          "enum": [
+            "pgtern",
+            "psycopg"
+          ]
+        },
+        "caSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
         "appPassword": {
           "type": "string"
         },

@@ -13,24 +13,22 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator
 
-import psycopg
-from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+from . import pg
 
 from .config import get_settings
 
-_pool: ConnectionPool | None = None
+_pool: pg.ConnectionPool | None = None
 
 
-def get_pool() -> ConnectionPool:
+def get_pool() -> pg.ConnectionPool:
     global _pool
     if _pool is None:
         s = get_settings()
-        _pool = ConnectionPool(
+        _pool = pg.ConnectionPool(
             s.database_url,
             min_size=s.db_pool_min,
             max_size=s.db_pool_max,
-            kwargs={"row_factory": dict_row},
+            kwargs={"row_factory": pg.dict_row},
             open=True,
         )
     return _pool
@@ -44,7 +42,7 @@ def close_pool() -> None:
 
 
 @contextmanager
-def tenant_tx(tenant_id: str, pool: ConnectionPool | None = None) -> Iterator[psycopg.Connection]:
+def tenant_tx(tenant_id: str, pool: pg.ConnectionPool | None = None) -> Iterator[pg.Connection]:
     if not tenant_id:
         raise ValueError("tenant_id is required for tenant-scoped database access")
     pool = pool or get_pool()

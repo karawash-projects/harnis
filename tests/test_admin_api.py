@@ -5,7 +5,7 @@ real Postgres (app role, RLS) and Redis."""
 import json
 import uuid
 
-import psycopg
+from harnis import pg as pgdrv
 import pytest
 from fastapi.testclient import TestClient
 
@@ -86,8 +86,8 @@ def test_disabled_tenant_is_locked_out(client, tenant):
 
 
 def test_app_role_cannot_touch_tenants_directly(pg):
-    with psycopg.connect(pg["app"]) as c:
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+    with pgdrv.connect(pg["app"]) as c:
+        with pytest.raises(pgdrv.errors.InsufficientPrivilege):
             c.execute("UPDATE tenants SET active = false")
 
 
