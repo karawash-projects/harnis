@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+- Release workflow: `docker/login-action` v4 (Node 24 runtime), which clears the Node.js 20 deprecation warning on release runs.
+
 ## [1.1.0] - 2026-11-02
 
 ### Changed
