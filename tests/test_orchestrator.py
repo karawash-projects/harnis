@@ -174,6 +174,14 @@ def test_action_hash_is_stable_and_covers_diff(tmp_path):
     assert action_hash(a) == action_hash(dict(a)) and action_hash(a) != action_hash(b)
 
 
+def test_diff_of_a_new_file_is_from_dev_null(tmp_path):
+    new = describe_action(tmp_path, "write_file", {"path": "greet.py", "content": "x = 1\n"})["diff"]
+    assert new.startswith("--- /dev/null\n+++ b/greet.py\n")
+    (tmp_path / "greet.py").write_text("x = 1\n")
+    old = describe_action(tmp_path, "write_file", {"path": "greet.py", "content": "x = 2\n"})["diff"]
+    assert old.startswith("--- a/greet.py\n+++ b/greet.py\n")
+
+
 def test_cache_hit_short_circuits(store, make_orch):
     class Cache:
         def lookup(self, tenant, scope, prompt):
@@ -185,6 +193,24 @@ def test_cache_hit_short_circuits(store, make_orch):
     orch = make_orch(store, cache=Cache())
     rec = orch.start_turn(store.new_session(), "What are your opening hours?")
     assert rec.state["reply"] == "cached answer" and rec.state["turn"]["cache_hit"]
+
+
+def test_cache_store_uses_the_agents_scope_and_only_first_messages(store, make_orch):
+    stores = []
+
+    class Cache:
+        def lookup(self, tenant, scope, prompt):
+            return None
+
+        def store(self, tenant, scope, prompt, answer):
+            stores.append((tenant, scope, prompt))
+
+    orch = make_orch(store, cache=Cache())
+    rec = orch.start_turn(store.new_session(), "What are your opening hours?")
+    assert [(t, s.split(":")[0], p) for t, s, p in stores] == [("acme", "support", "What are your opening hours?")]
+    assert stores[0][1].startswith("support:v")
+    orch.start_turn(rec, "And on holidays?")  # a follow-up depends on the conversation: never cached
+    assert len(stores) == 1
 
 
 # ---------------------------------------------------------------------------

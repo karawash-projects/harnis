@@ -299,11 +299,15 @@ class Orchestrator:
             st["agent"] = agent
             if previous is not None and agent != previous:
                 st["flags"].append(f"rerouted:{previous}->{agent}")
-        first_message = sum(1 for m in st["messages"] if m["role"] == "user"
-                            and any(b["type"] == "text" for b in m["content"])) == 1
+        first_message = self._is_first_message(st)
         if self.d.cache is not None and reg.agent(st["agent"]).cacheable and first_message:
             return "cache_lookup"
         return "agent"
+
+    @staticmethod
+    def _is_first_message(st: dict[str, Any]) -> bool:
+        return sum(1 for m in st["messages"] if m["role"] == "user"
+                   and any(b["type"] == "text" for b in m["content"])) == 1
 
     def cache_lookup(self, rec: SessionRecord) -> str:
         """Only for the first message of a support session: a follow-up depends
@@ -480,10 +484,12 @@ class Orchestrator:
             st["flags"].append("output_redacted")
         if (self.d.cache is not None and self.d.registry.agent(st["agent"]).cacheable
                 and not st["turn"]["used_tools"]
-                and not out.redactions):
+                and not out.redactions
+                and self._is_first_message(st)):  # lookups only happen for first messages
             prompt_version = self._prompt(rec, st["agent"])[1]
             try:
-                self.d.cache.store(rec.tenant_id, f"support:v{prompt_version}", st["turn"]["clean_input"], out.text)
+                self.d.cache.store(rec.tenant_id, f"{st['agent']}:v{prompt_version}",
+                                   st["turn"]["clean_input"], out.text)
             except Exception:
                 log.exception("semantic cache store failed; answer not cached")
                 st["flags"].append("cache_error")

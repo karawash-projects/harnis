@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-04
+
+### Security
+- **Docker older than 28 now refuses dependency installs** instead of logging a warning and running them on a network the Docker host is reachable from. Upgrade Docker, use the Kubernetes backend, or set `SANDBOX_ALLOW_HOST_REACHABLE_INSTALLS=true` to accept the risk (Docker backend only).
+- **The Kubernetes network probe checks two addresses**: the API server (as before) and `1.1.1.1:443`, outside the cluster. Both must be blocked before a command runs, because some CNIs special-case traffic to the API server. Override with `SANDBOX_K8S_NETWORK_PROBE`.
+
+### Fixed
+- The review diff for a new file now reads `--- /dev/null` instead of `--- a/<path>`.
+- The semantic cache stored answers under a fixed `support:` scope instead of the answering agent's scope, and could store answers to follow-up messages that are never looked up. It now stores under the agent's scope and only first messages. Only the support agent is cacheable by default, so default deployments were not affected.
+
 ### Changed
 - Release workflow: `docker/login-action` v4 (Node 24 runtime), which clears the Node.js 20 deprecation warning on release runs.
 - The local stack (`tasks.py up`), the local kind cluster and CI use Valkey 9.0 (BSD-3-Clause) instead of Redis Stack (RSALv2 / SSPLv1), so every component of the default setup is under an open-source license. Without a search engine the semantic cache uses its brute-force fallback; Redis 8 or Redis Stack still give it a vector index, and the docs explain the license difference.

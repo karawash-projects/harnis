@@ -108,8 +108,9 @@ _UPLOAD_SCRIPT = 'head -c "$1" | tar xf - -C "$2"'
 # NetworkPolicies a moment after the Pod is Running, so its first connections
 # can get out. The probe connects to targets that the sandbox policies block
 # (by default the API server's ClusterIP, which every Pod can resolve from its
-# environment) and returns only once two attempts in a row are refused or time
-# out. Exit 0: isolated; 3: still reachable at the deadline; 4: misconfigured.
+# environment, and an address outside the cluster: some plugins treat the API
+# server specially, so both must be blocked) and returns only once two attempts
+# in a row are refused or time out. Exit 0: isolated; 3: still reachable at the deadline; 4: misconfigured.
 _PROBE_SCRIPT = r"""
 import os, socket, sys, time
 def targets():
@@ -121,6 +122,7 @@ def targets():
                 print("KUBERNETES_SERVICE_HOST is not set; set SANDBOX_K8S_NETWORK_PROBE to host:port")
                 sys.exit(4)
             out.append((host, int(os.environ.get("KUBERNETES_SERVICE_PORT", "443"))))
+            out.append(("1.1.1.1", 443))  # an address outside the cluster: both must be blocked
         else:
             host, _, port = t.rpartition(":")
             out.append((host.strip("[]"), int(port)))
