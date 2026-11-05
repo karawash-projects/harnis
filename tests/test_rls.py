@@ -156,3 +156,13 @@ def test_prompt_versions_increment_per_tenant(store, fresh):
     assert store.put_prompt(a, "support", "v2 text here", "admin") == 2
     assert store.get_prompt(a, "support") == ("v2 text here", 2)
     assert store.get_prompt(b, "support") is None
+
+
+def test_definer_functions_pin_search_path_with_pg_temp_last(pg):
+    """A definer function must not search the session's temporary schema first."""
+    with pgdrv.connect(pg["owner"]) as c:
+        rows = c.execute("SELECT p.proname, p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+                         " WHERE p.prosecdef AND n.nspname = 'public'").fetchall()
+    assert len(rows) == 8
+    for name, config in rows:
+        assert "search_path=public, pg_temp" in (config or []), name

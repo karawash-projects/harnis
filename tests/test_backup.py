@@ -45,7 +45,7 @@ def test_backup_and_restore_drill(db, tmp_path):
 
         backup = create(tmp_path / "backups", owner, ws)
         manifest = verify(backup)
-        assert manifest["tenants"] == 1 and manifest["migrations"][-1].startswith("006")
+        assert manifest["tenants"] == 1 and manifest["migrations"][-1].startswith("007")
 
         # Disaster: data deleted, files lost, a tampered backup is refused.
         with pgdrv.connect(owner, autocommit=True) as c:

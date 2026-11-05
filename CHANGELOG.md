@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-11-04
+
+### Security
+- Migration `007_definer_search_path.sql`: the `SECURITY DEFINER` functions now pin `search_path = public, pg_temp`. PostgreSQL searches the session's temporary schema first unless it is listed, so a role with the default `TEMPORARY` privilege could otherwise shadow a table a definer function reads. The application role only runs parameterized queries, so the risk was low. A test asserts the setting on every definer function.
+
 ## [1.1.1] - 2026-11-04
 
 ### Security
