@@ -162,6 +162,9 @@ class Settings(BaseSettings):
     sandbox_egress_allow_private: bool = False  # true for an internal package mirror
     sandbox_egress_network: str = "harnis-sandbox-egress"   # Docker backend
     sandbox_egress_proxy_image: str = ""      # Docker backend; default: SANDBOX_IMAGE
+    # Docker older than 28 can't isolate the install network from the Docker host. Installs are refused
+    # there unless the operator accepts that risk.
+    sandbox_allow_host_reachable_installs: bool = False
     sandbox_egress_proxy_url: str = ""        # Kubernetes backend: the chart's proxy Service
     sandbox_deps_max_bytes: int = 300_000_000
     sandbox_deps_max_files: int = 60_000

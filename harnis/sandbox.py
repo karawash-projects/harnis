@@ -65,6 +65,10 @@ DEPS_ENV = {
 }
 EGRESS_PROXY_NAME = "harnis-egress-proxy"
 _WARNED_GATEWAY = False
+
+
+class InstallNetworkUnsafe(RuntimeError):
+    """The Docker daemon can't give an install run a network the Docker host isn't on."""
 EGRESS_PROXY_PORT = 3128
 
 
@@ -281,7 +285,8 @@ class DockerSandbox:
                  deps_max_files: int = 60_000, install_timeout: int = 300,
                  egress_allow: str = "pypi.org,files.pythonhosted.org,registry.npmjs.org",
                  egress_upstream_proxy: str = "", egress_allow_private: bool = False,
-                 egress_network: str = "harnis-sandbox-egress", egress_proxy_image: str = ""):
+                 egress_network: str = "harnis-sandbox-egress", egress_proxy_image: str = "",
+                 allow_host_reachable_installs: bool = False):
         if workspace_mode not in ("copy", "bind"):
             raise ValueError("workspace_mode must be 'copy' or 'bind'")
         if workspace_mode == "bind" and sys.platform != "linux":
@@ -304,6 +309,7 @@ class DockerSandbox:
         self.egress_allow_private = egress_allow_private
         self.egress_network = egress_network
         self.egress_proxy_image = egress_proxy_image or image
+        self.allow_host_reachable_installs = allow_host_reachable_installs
         self._client = None
 
     # -- egress for dependency installs --------------------------------------------
@@ -367,11 +373,19 @@ class DockerSandbox:
         try:
             net = c.networks.create(name, driver="bridge", internal=True, labels=labels,
                                     options={"com.docker.network.bridge.gateway_mode_ipv4": "isolated"})
-        except docker.errors.APIError:
+        except docker.errors.APIError as exc:
+            # Fail closed: without an isolated gateway the Docker host has an address on this
+            # network, so install code could reach services listening on the host.
+            if not self.allow_host_reachable_installs:
+                raise InstallNetworkUnsafe(
+                    "this Docker daemon can't create an isolated install network (needs Docker 28+), so the "
+                    "install was not run: install code could reach services on the Docker host. Upgrade "
+                    "Docker, use the Kubernetes backend, or accept the risk with "
+                    f"SANDBOX_ALLOW_HOST_REACHABLE_INSTALLS=true ({str(exc)[:120]})") from exc
             global _WARNED_GATEWAY
             if not _WARNED_GATEWAY:
-                log.warning("Docker doesn't support isolated gateways (needs Docker 28+): install runs can reach "
-                            "services listening on the Docker host. Upgrade Docker or use the Kubernetes backend.")
+                log.warning("SANDBOX_ALLOW_HOST_REACHABLE_INSTALLS is set and this Docker daemon has no isolated "
+                            "gateways (Docker 28+): install runs can reach services on the Docker host.")
                 _WARNED_GATEWAY = True
             net = c.networks.create(name, driver="bridge", internal=True, labels=labels)
         proxy = c.containers.get(EGRESS_PROXY_NAME)

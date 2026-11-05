@@ -159,7 +159,8 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
         install_timeout=settings.sandbox_install_timeout_seconds, egress_allow=settings.sandbox_egress_allow,
         egress_upstream_proxy=settings.sandbox_egress_upstream_proxy,
         egress_allow_private=settings.sandbox_egress_allow_private,
-        egress_network=settings.sandbox_egress_network, egress_proxy_image=settings.sandbox_egress_proxy_image)
+        egress_network=settings.sandbox_egress_network, egress_proxy_image=settings.sandbox_egress_proxy_image,
+        allow_host_reachable_installs=settings.sandbox_allow_host_reachable_installs)
     if not settings.sandbox_install_enabled:  # operator turned network installs off
         for agent in registry.agents.values():
             agent.tools = [t for t in agent.tools if t != "install_dependencies"]
