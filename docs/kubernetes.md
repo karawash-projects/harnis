@@ -51,10 +51,10 @@ python tasks.py k8s-down
 ## 1. Build and push the images
 
 ```bash
-docker build -t registry.example.com/harnis:1.1.1 .
-docker build -f Dockerfile.sandbox -t registry.example.com/harnis-sandbox:1.1.1 .
-docker push registry.example.com/harnis:1.1.1
-docker push registry.example.com/harnis-sandbox:1.1.1
+docker build -t registry.example.com/harnis:1.1.2 .
+docker build -f Dockerfile.sandbox -t registry.example.com/harnis-sandbox:1.1.2 .
+docker push registry.example.com/harnis:1.1.2
+docker push registry.example.com/harnis-sandbox:1.1.2
 ```
 
 The API image must include the `kubernetes` Python package (the `k8s` extra).
@@ -255,11 +255,11 @@ A minimal production values file (`values-prod.yaml`):
 ```yaml
 image:
   repository: registry.example.com/harnis
-  tag: "1.1.1"
+  tag: "1.1.2"
 sandbox:
   image:
     repository: registry.example.com/harnis-sandbox
-    tag: "1.1.1"
+    tag: "1.1.2"
   runtimeClassName: gvisor
   nodeSelector: {harnis.dev/pool: sandbox}
   tolerations:
@@ -341,7 +341,7 @@ Some CNIs apply NetworkPolicy to a new Pod a moment after it is Running (kind's 
 
 | Setting (values / env) | Default | Meaning |
 |---|---|---|
-| `sandbox.networkProbe.targets` / `SANDBOX_K8S_NETWORK_PROBE` | `auto` | `auto`: the API server's ClusterIP (from `KUBERNETES_SERVICE_HOST` in the Pod) and an address outside the cluster (`1.1.1.1:443`); both must be blocked, because some CNIs treat traffic to the API server specially. Or comma-separated `host:port` addresses the sandbox policy blocks. `off` (on its own) skips the check: only for a CNI that enforces policy before a Pod starts, verified by you. If your CNI always lets Pods reach their node (for example Calico with `DefaultEndpointToHostAction=ACCEPT`) and the API server runs on that node, `auto` refuses every command: give targets the policy really blocks. |
+| `sandbox.networkProbe.targets` / `SANDBOX_K8S_NETWORK_PROBE` | `auto` | `auto`: the API server's ClusterIP (from `KUBERNETES_SERVICE_HOST` in the Pod) and an address outside the cluster (`1.1.2.1:443`); both must be blocked, because some CNIs treat traffic to the API server specially. Or comma-separated `host:port` addresses the sandbox policy blocks. `off` (on its own) skips the check: only for a CNI that enforces policy before a Pod starts, verified by you. If your CNI always lets Pods reach their node (for example Calico with `DefaultEndpointToHostAction=ACCEPT`) and the API server runs on that node, `auto` refuses every command: give targets the policy really blocks. |
 | `sandbox.networkProbe.timeoutSeconds` / `SANDBOX_K8S_NETWORK_PROBE_TIMEOUT` | `20` | How long to wait for the policy before refusing the command. |
 
 The probe runs `python3` in the sandbox image (the default image has it); a custom image without `python3` needs it added, or the check turned off.
