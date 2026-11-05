@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **The Kubernetes network probe checks two addresses**: the API server (as before) and `1.1.1.1:443`, outside the cluster. Both must be blocked before a command runs, because some CNIs special-case traffic to the API server. Override with `SANDBOX_K8S_NETWORK_PROBE`.
 
 ### Fixed
+- The review diff for a new file now reads `--- /dev/null` instead of `--- a/<path>`.
 - The semantic cache stored answers under a fixed `support:` scope instead of the answering agent's scope, and could store answers to follow-up messages that are never looked up. It now stores under the agent's scope and only first messages. Only the support agent is cacheable by default, so default deployments were not affected.
 
 ### Changed

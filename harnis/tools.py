@@ -175,13 +175,17 @@ def action_hash(action: dict[str, Any]) -> str:
 
 
 def unified_diff(workspace: Path, path: str, new_content: str) -> str:
+    is_new = True
     try:
         target = safe_path(workspace, path)
-        old = read_text(target) if target.is_file() else ""
+        if target.is_file():
+            old, is_new = read_text(target), False
+        else:
+            old = ""
     except WorkspaceError:
         old = ""
     return "".join(difflib.unified_diff(old.splitlines(True), new_content.splitlines(True),
-                                        fromfile=f"a/{path}", tofile=f"b/{path}"))
+                                        fromfile="/dev/null" if is_new else f"a/{path}", tofile=f"b/{path}"))
 
 
 @dataclass

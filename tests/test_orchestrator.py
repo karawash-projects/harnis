@@ -174,6 +174,14 @@ def test_action_hash_is_stable_and_covers_diff(tmp_path):
     assert action_hash(a) == action_hash(dict(a)) and action_hash(a) != action_hash(b)
 
 
+def test_diff_of_a_new_file_is_from_dev_null(tmp_path):
+    new = describe_action(tmp_path, "write_file", {"path": "greet.py", "content": "x = 1\n"})["diff"]
+    assert new.startswith("--- /dev/null\n+++ b/greet.py\n")
+    (tmp_path / "greet.py").write_text("x = 1\n")
+    old = describe_action(tmp_path, "write_file", {"path": "greet.py", "content": "x = 2\n"})["diff"]
+    assert old.startswith("--- a/greet.py\n+++ b/greet.py\n")
+
+
 def test_cache_hit_short_circuits(store, make_orch):
     class Cache:
         def lookup(self, tenant, scope, prompt):
