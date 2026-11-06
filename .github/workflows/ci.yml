@@ -141,6 +141,17 @@ jobs:
       - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
       - run: helm lint --strict deploy/helm/harnis
+      - name: more than one replica needs shared storage; the maintenance job is not the API
+        run: |
+          set -uo pipefail
+          if helm template h deploy/helm/harnis -n harnis --set api.replicaCount=2 >/dev/null 2>err.txt; then
+            echo "expected the render to fail without shared workspace storage"; exit 1
+          fi
+          grep -q "shared workspace storage" err.txt
+          helm template h deploy/helm/harnis -n harnis --set api.replicaCount=2 \
+            --set workspaces.persistence.enabled=true >/dev/null
+          # The CronJob loads ENV=production but not the API's secrets: it must run as a job.
+          helm template h deploy/helm/harnis -n harnis | grep -A1 "name: COMPONENT" | grep -q '"job"'
       - name: database CA bundle and driver settings render where they are used
         run: |
           set -euo pipefail

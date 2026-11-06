@@ -47,6 +47,9 @@ spec:
               env:
                 - name: HOME
                   value: /tmp
+                # A job, not the API: the API's production checks (JWT_SECRET, ...) don't apply.
+                - name: COMPONENT
+                  value: "job"
                 - name: MIGRATION_DATABASE_URL
                   valueFrom:
                     secretKeyRef:

@@ -149,7 +149,8 @@ def test_non_admin_cannot_create_keys(client, tenant):
 
 def test_websocket_accepts_api_key(client, tenant):
     key = client.post("/v1/admin/api-keys", json={"name": "ws"}, headers=h("boss", tenant, ("admin",))).json()["key"]
-    with client.websocket_connect(f"/v1/ws?token={key}") as ws:
+    with client.websocket_connect("/v1/ws") as ws:
+        ws.send_json({"type": "auth", "token": key})
         assert '"hello"' in ws.receive_text()
 
 
@@ -242,7 +243,8 @@ def _closed_with(ws, within: float = 10.0) -> int:
 def test_websocket_closes_when_its_api_key_is_revoked(fast_ws_client, tenant):
     c, admin = fast_ws_client, h("boss", tenant, ("admin",))
     created = c.post("/v1/admin/api-keys", json={"name": "ws"}, headers=admin).json()
-    with c.websocket_connect(f"/v1/ws?token={created['key']}") as ws:
+    with c.websocket_connect("/v1/ws") as ws:
+        ws.send_json({"type": "auth", "token": created['key']})
         assert '"hello"' in ws.receive_text()
         assert c.delete(f"/v1/admin/api-keys/{created['key_id']}", headers=admin).status_code == 204
         assert _closed_with(ws) == 4401
@@ -251,7 +253,8 @@ def test_websocket_closes_when_its_api_key_is_revoked(fast_ws_client, tenant):
 def test_websocket_closes_when_the_tenant_is_disabled(fast_ws_client, tenant):
     c = fast_ws_client
     token = mint_token("alice", tenant, ["user"])
-    with c.websocket_connect(f"/v1/ws?token={token}") as ws:
+    with c.websocket_connect("/v1/ws") as ws:
+        ws.send_json({"type": "auth", "token": token})
         assert '"hello"' in ws.receive_text()
         assert c.put(f"/v1/admin/tenants/{tenant}", json={"active": False}, headers=PLATFORM).status_code == 200
         assert _closed_with(ws) == 4403
@@ -263,14 +266,16 @@ def test_websocket_refuses_a_disabled_tenant_at_connect(fast_ws_client, tenant):
     c = fast_ws_client
     assert c.put(f"/v1/admin/tenants/{tenant}", json={"active": False}, headers=PLATFORM).status_code == 200
     with pytest.raises(WebSocketDisconnect) as exc:
-        with c.websocket_connect(f"/v1/ws?token={mint_token('alice', tenant, ['user'])}") as ws:
+        with c.websocket_connect("/v1/ws") as ws:
+            ws.send_json({"type": "auth", "token": mint_token('alice', tenant, ['user'])})
             ws.receive_text()
     assert exc.value.code == 4403
 
 
 def test_websocket_serves_platform_admins(fast_ws_client):
     token = mint_token("ops", "platform", ["platform-admin"])
-    with fast_ws_client.websocket_connect(f"/v1/ws?token={token}") as ws:
+    with fast_ws_client.websocket_connect("/v1/ws") as ws:
+        ws.send_json({"type": "auth", "token": token})
         assert '"hello"' in ws.receive_text()
         with pytest.raises(AssertionError, match="still open"):
             _closed_with(ws, within=1.2)  # several re-checks pass: the stream stays open

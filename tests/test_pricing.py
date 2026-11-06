@@ -62,7 +62,8 @@ def app(tmp_path, providers, **kw):
 
 
 def test_production_refuses_unpriced_models(tmp_path):
-    prod = dict(env="production", jwt_secret="x" * 40, llm_providers="anthropic")
+    prod = dict(env="production", jwt_secret="x" * 40, llm_providers="anthropic",
+            database_url="postgresql://harnis_app:a-long-random-password@db:5432/harnis")
     with pytest.raises(RuntimeError, match="claude-haiku-5-5, claude-sonnet-5-5"):
         app(tmp_path, [Priced()], **prod)
     app(tmp_path, [Priced()], pricing_overrides={"claude-sonnet-5-5": [3, 15], "claude-haiku-5-5": [1, 5]}, **prod)

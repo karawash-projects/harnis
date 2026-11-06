@@ -408,7 +408,10 @@ workspaces:
 The created PVC has `helm.sh/resource-policy: keep`, so uninstalling the
 release does not delete session files. With persistence disabled an emptyDir
 is used; that is only correct for a single replica, and files are lost when
-the Pod is replaced.
+the Pod is replaced. The chart's default is one replica, and it refuses to
+render with more than one (`api.replicaCount` or `autoscaling.minReplicas`)
+unless `workspaces.persistence` uses ReadWriteMany storage or an
+`existingClaim`.
 
 ## Observability
 

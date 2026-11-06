@@ -7,7 +7,7 @@ This document is for teams evaluating or operating Harnis. It describes the comp
 ```
                          clients: web console, CLI (harnis), CI with API keys, your apps
                                          |  HTTPS: Authorization: Bearer <OIDC JWT | local JWT | API key>
-                                         |  WSS:   /v1/ws?token=...
+                                         |  WSS:   /v1/ws  (first message: {"type":"auth","token":...})
                                          v
  +--------------------------------- API replica (stateless; N of them) ----------------------------------+
  |                                                                                                        |

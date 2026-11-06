@@ -67,7 +67,8 @@ def test_security_headers_everywhere_and_hsts_in_production(tmp_path):
         assert "content-security-policy" not in r.headers  # /docs keeps working
         assert "strict-transport-security" not in r.headers
         assert c.get("/static/console.js").headers["content-type"].startswith(("text/javascript", "application/javascript"))
-    prod = app_with(tmp_path, env="production", jwt_secret="x" * 40, llm_providers="anthropic")
+    prod = app_with(tmp_path, env="production", jwt_secret="x" * 40, llm_providers="anthropic",
+                    database_url="postgresql://harnis_app:a-long-random-password@db:5432/harnis")
     with TestClient(prod) as c:
         assert "max-age" in c.get("/health").headers["strict-transport-security"]
 
@@ -76,3 +77,31 @@ def test_console_can_be_disabled(tmp_path):
     with TestClient(app_with(tmp_path, console_enabled=False)) as c:
         assert c.get("/").json()["docs"] == "/docs"
         assert c.get("/static/console.js").status_code == 404
+
+
+def test_env_must_be_spelled_exactly_and_default_db_passwords_are_refused_in_production():
+    import pytest
+    from harnis.config import Settings
+
+    strong = dict(jwt_secret="x" * 40, llm_providers="anthropic",
+                  database_url="postgresql://harnis_app:a-long-random-password@db:5432/harnis")
+    for bad in ("prod", "staging", ""):
+        with pytest.raises(ValueError, match="ENV must be"):
+            Settings(_env_file=None, env=bad, **strong)
+    assert Settings(_env_file=None, env=" Production ", **strong).env == "production"
+    with pytest.raises(ValueError, match="default or well-known password"):
+        Settings(_env_file=None, env="production", jwt_secret="x" * 40, llm_providers="anthropic")
+
+
+def test_maintenance_job_starts_in_production_without_the_api_secrets():
+    """The Helm CronJob loads ENV=production but not JWT_SECRET: it runs as COMPONENT=job."""
+    import pytest
+    from harnis.config import Settings
+
+    with pytest.raises(ValueError):  # as the API it refuses to start (no strong secret, mock provider, ...)
+        Settings(_env_file=None, env="production")
+    assert Settings(_env_file=None, env="production", component="job").component == "job"
+    with pytest.raises(ValueError, match="COMPONENT"):
+        Settings(_env_file=None, component="worker")
+    cron = open("deploy/helm/harnis/templates/maintenance-cronjob.yaml").read()
+    assert 'name: COMPONENT' in cron and '"job"' in cron

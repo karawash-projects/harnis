@@ -59,7 +59,7 @@ import uuid
 from typing import Any, Callable
 from urllib import error as urlerror
 from urllib import request as urlrequest
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +128,8 @@ def mint(secret: str, user: str, tenant: str, roles: list[str], issuer: str, aud
 class WebSocket:
     """Just enough RFC 6455 to read the server's event stream."""
 
-    def __init__(self, base: str, path: str, ssl_ctx: ssl.SSLContext | None, timeout: float = 10):
+    def __init__(self, base: str, path: str, ssl_ctx: ssl.SSLContext | None, timeout: float = 10,
+                 token: str | None = None):
         u = urlsplit(base)
         secure = u.scheme == "https"
         port = u.port or (443 if secure else 80)
@@ -149,6 +150,8 @@ class WebSocket:
         self.status = int(head.split(b" ", 2)[1]) if head.startswith(b"HTTP/") else 0
         expect = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
         self.ok = self.status == 101 and expect in head
+        if self.ok and token is not None:  # the token goes in the first message, never in the URL
+            self._send(1, json.dumps({"type": "auth", "token": token}).encode())
 
     def _read(self, n: int) -> bytes:
         while len(self.buf) < n:
@@ -906,7 +909,7 @@ class Check:
         r.section("Live events (WebSocket)")
 
         def stream():
-            ws = WebSocket(self.a.api, f"/v1/ws?token={quote(self.user)}", self.ssl)
+            ws = WebSocket(self.a.api, "/v1/ws", self.ssl, token=self.user)
             expect(ws.ok, f"WebSocket upgrade failed (HTTP {ws.status}); does the proxy allow WebSockets?")
             try:
                 first = ws.recv(10)
@@ -940,7 +943,7 @@ class Check:
         r.check("progress events stream to the session owner", stream)
 
         def bad_token():
-            ws = WebSocket(self.a.api, "/v1/ws?token=not-a-token", self.ssl)
+            ws = WebSocket(self.a.api, "/v1/ws", self.ssl, token="not-a-token")
             try:
                 if ws.ok:
                     msg = ws.recv(5)
@@ -951,7 +954,7 @@ class Check:
 
         def reviewer_events():
             self.need_mock()
-            ws = WebSocket(self.a.api, f"/v1/ws?token={quote(self.reviewer)}", self.ssl)
+            ws = WebSocket(self.a.api, "/v1/ws", self.ssl, token=self.reviewer)
             try:
                 ws.recv(10)  # hello
                 sid = self.session(self.user)

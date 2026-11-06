@@ -17,11 +17,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _DEV_JWT_SECRET = "dev-only-change-me-dev-only-change-me"
 
 
+_DEFAULT_DB_PASSWORDS = {"harnis_app", "postgres", "password", "harnis"}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True,
                                       env_ignore_empty=True)  # KEY= in .env or a chart means "not set"
 
     env: str = "development"
+    # Which process this is. The Helm CronJob sets `job`: it needs the database and retention
+    # settings but not the API's secrets, so the API-only production checks below do not apply.
+    component: str = "api"
 
     # --- Postgres -----------------------------------------------------------
     # The app connects as a NON-OWNER, NON-SUPERUSER role so Row-Level
@@ -209,6 +215,9 @@ class Settings(BaseSettings):
 
     # --- Human-in-the-loop --------------------------------------------------
     approval_ttl_seconds: int = 3600
+    # Deprecated: accept the token in the WebSocket URL (`/v1/ws?token=`). URLs are logged by
+    # servers and proxies; clients should send {"type": "auth", "token": ...} as the first message.
+    ws_allow_query_token: bool = False
     # Live event connections (/v1/ws) re-check their credential this often and
     # close when it has expired or been revoked, or the tenant was disabled.
     ws_revalidate_seconds: float = Field(60, gt=0)
@@ -243,17 +252,32 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_in_production(self) -> "Settings":
+        # Exact spelling matters: "prod" or "Production" must not silently turn the checks off.
+        self.env = str(self.env).strip().lower()
+        if self.env not in ("development", "test", "production"):
+            raise ValueError("ENV must be 'development', 'test' or 'production' (a misspelling such as 'prod' "
+                             "would silently turn the production checks off; run staging as 'production')")
+        if self.component not in ("api", "job"):
+            raise ValueError("COMPONENT must be 'api' or 'job'")
         if self.auth_mode not in ("local", "oidc"):
             raise ValueError("AUTH_MODE must be 'local' or 'oidc'")
         if self.auth_mode == "oidc" and not (self.oidc_issuer and self.oidc_audience):
             raise ValueError("AUTH_MODE=oidc needs OIDC_ISSUER and OIDC_AUDIENCE")
-        if self.env == "production":
+        if self.env == "production" and self.component == "api":
             if self.auth_mode == "local" and (self.jwt_secret == _DEV_JWT_SECRET or len(self.jwt_secret) < 32):
                 raise ValueError("JWT_SECRET must be set to a strong value in production")
             if "mock" in self.provider_chain:
                 raise ValueError("The mock LLM provider is not allowed in production")
             if self.allow_self_approval:
                 raise ValueError("ALLOW_SELF_APPROVAL must be false in production")
+            from urllib.parse import urlsplit
+            try:
+                db_password = urlsplit(self.database_url).password or ""
+            except ValueError:
+                db_password = ""
+            if db_password in _DEFAULT_DB_PASSWORDS:
+                raise ValueError("DATABASE_URL uses a default or well-known password; set a strong one "
+                                 "(and the same value as APP_DB_PASSWORD) in production")
         return self
 
 

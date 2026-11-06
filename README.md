@@ -253,7 +253,7 @@ All endpoints except `/health`, `/ready` and `/` need `Authorization: Bearer <OI
 | `GET /v1/admin/platform-events` | platform-admin | platform audit trail (tenant deletions) |
 | `GET /metrics` | scraper (`METRICS_TOKEN`) | Prometheus metrics |
 | `GET /me` | any | who the token says you are |
-| `WS /v1/ws?token=...` | any | live events (your sessions; plus approvals for reviewers) |
+| `WS /v1/ws` | any | live events (your sessions; plus approvals for reviewers). Send `{"type": "auth", "token": "..."}` as the first message; the token is never put in the URL |
 
 The event stream re-checks its token every `WS_REVALIDATE_SECONDS` (default 60) and closes with code 4401 once the token has expired or the API key was revoked, or 4403 once the tenant was disabled; clients reconnect with a fresh token.
 

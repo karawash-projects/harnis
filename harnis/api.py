@@ -602,13 +602,30 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
 
     # -- WebSocket event stream -------------------------------------------------
     @app.websocket("/v1/ws")
-    async def ws(websocket: WebSocket, token: str = Query(...)):
-        # Browsers can't set headers on WebSocket upgrades, so the token comes in
-        # the query string. Keep tokens short-lived and don't log query strings.
+    async def ws(websocket: WebSocket, token: str | None = Query(None)):
+        # The token is sent as the first message ({"type": "auth", "token": ...}), not in
+        # the URL: URLs end up in access logs (uvicorn, ingress, proxies).
+        # `?token=` still works only if WS_ALLOW_QUERY_TOKEN=true (deprecated).
+        await websocket.accept()
+        if token is not None and not settings.ws_allow_query_token:
+            await websocket.close(code=4401)
+            return
+        if token is None:
+            try:
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=10)
+                msg = json.loads(raw) if len(raw) <= 16_384 else {}
+                token = msg.get("token") if msg.get("type") == "auth" else None
+            except (asyncio.TimeoutError, WebSocketDisconnect, ValueError, AttributeError):
+                token = None
+            if not isinstance(token, str) or not token:
+                await websocket.close(code=4401)
+                return
+        tok = token
+
         def check() -> Principal:
             # Same rules as an HTTP request: a valid credential and an active
             # tenant. Runs in a worker thread (API keys and OIDC can do I/O).
-            p = app.state.auth.authenticate(token)
+            p = app.state.auth.authenticate(tok)
             # Platform admins hold no role inside a tenant (their pseudo-tenant
             # has no row), so only tenant roles are tied to an active tenant.
             if p.roles & TENANT_ROLES and not store.tenant_active(p.tenant_id):
@@ -620,7 +637,6 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
         except HTTPException as exc:
             await websocket.close(code=4403 if exc.status_code == 403 else 4401)
             return
-        await websocket.accept()
         ar = aioredis.Redis.from_url(settings.redis_url)  # pub/sub holds its own connection anyway
         pubsub = ar.pubsub()
         channels = [f"events:{p.tenant_id}:user:{p.user_id}"]

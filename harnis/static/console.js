@@ -256,9 +256,10 @@
   function connectEvents() {
     if (state.ws) { state.ws.onclose = null; state.ws.close(); }
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/v1/ws?token=${encodeURIComponent(state.token)}`);
+    const ws = new WebSocket(`${proto}://${location.host}/v1/ws`);
     state.ws = ws;
-    ws.onopen = () => { setLive(true); state.wsBackoff = 0; };
+    // The token goes in the first message, never in the URL (URLs are logged).
+    ws.onopen = () => { ws.send(JSON.stringify({ type: "auth", token: state.token })); setLive(true); state.wsBackoff = 0; };
     ws.onmessage = (ev) => {
       let e;
       try { e = JSON.parse(ev.data); } catch { return; }
