@@ -207,7 +207,9 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
 
     # -- health ---------------------------------------------------------------
     @app.get("/health")
-    def health() -> dict[str, str]:
+    async def health() -> dict[str, str]:
+        # async on purpose: it runs on the event loop, not in the worker-thread pool that
+        # long turns occupy, so liveness probes still answer when every thread is busy.
         return {"status": "ok"}
 
     @app.get("/ready")

@@ -208,3 +208,12 @@ def test_websocket_token_is_not_accepted_in_the_url(client):
             ws.send_json({"type": "hello"})
             ws.receive_text()
     assert e.value.code == 4401
+
+
+def test_health_runs_on_the_event_loop_not_in_the_worker_thread_pool(client):
+    """/health is async, so busy worker threads (long turns) can't stall liveness probes."""
+    import inspect
+
+    endpoint = next(r.endpoint for r in client.app.routes if getattr(r, "path", "") == "/health")
+    assert inspect.iscoroutinefunction(endpoint)
+    assert client.get("/health").json() == {"status": "ok"}

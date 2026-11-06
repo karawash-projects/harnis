@@ -24,6 +24,8 @@ Fixes from an independent pre-production code review. Each item below was reprod
 - **The chart defaults to one replica** and refuses to render more than one (or `autoscaling.minReplicas` above 1) without ReadWriteMany workspace storage or an `existingClaim`. Before, two replicas with their own `emptyDir` lost the session's files whenever the other Pod handled an approval.
 - The safety filter no longer alters content the model may write back: file contents and user text keep their characters (no Unicode normalisation, no stripped joiners), and only secrets and PII are redacted. `tokenizer: ...` and `author_name = ...` are no longer taken for secrets.
 - Ordinary coding requests are no longer refused: "override the default rules in .eslintrc", "bypass all lint rules" and a YAML `system:` line. Instruction-override text, chat-template tags and `[system]:` lines are still blocked.
+- **`/health` no longer stalls under load.** It is `async`, so it runs on the event loop instead of the worker-thread pool that long turns occupy; before, a busy pool could fail the liveness probe and get the Pod killed mid-turn.
+- **The session lock is renewed while a turn runs.** It was a fixed 900 s lock that a slow turn (model retries across providers) could outlive, letting a second turn start on the same session. It is now 120 s and renewed by a heartbeat, so a crashed Pod releases the session within two minutes instead of fifteen.
 - A resumed approved action was counted twice by the tool budget and the loop breaker, so one later identical call could trigger "loop detected".
 - Docs: the Kubernetes probe address was printed as `1.1.2.1:443` (a version-bump slip); it is `1.1.1.1:443`.
 

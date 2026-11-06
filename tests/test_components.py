@@ -194,3 +194,24 @@ def test_collector_reachable_handles_closed_port():
     with socket.socket() as srv:
         srv.bind(("127.0.0.1", 0)); srv.listen()
         assert collector_reachable(f"http://127.0.0.1:{srv.getsockname()[1]}")
+
+
+def test_session_lock_is_renewed_while_held_and_released_when_the_holder_dies():
+    import time
+
+    import fakeredis
+    from harnis.infra import SessionLock
+
+    r = fakeredis.FakeRedis()
+    lock = SessionLock(r, ttl_seconds=0.6)
+    with lock.hold("s9") as a:
+        time.sleep(1.8)  # three times the TTL: without renewal the lock would be gone
+        with lock.hold("s9") as b:
+            assert a and not b
+    with lock.hold("s9") as c:
+        assert c
+    # a holder that never renews (a crashed process) loses the lock after the TTL
+    r.set("lock:session:s10", "dead-worker", px=300)
+    time.sleep(0.5)
+    with lock.hold("s10") as d:
+        assert d

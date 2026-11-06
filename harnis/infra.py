@@ -5,12 +5,16 @@ rate limiting, per-session locks, and the event bus."""
 from __future__ import annotations
 
 import json
+import logging
+import threading
 import time
 import uuid
 from contextlib import contextmanager
 from typing import Any, Iterator
 
 import redis as redis_lib
+
+log = logging.getLogger(__name__)
 
 _TOKEN_BUCKET = """
 local key = KEYS[1]
@@ -52,23 +56,46 @@ class RateLimiter:
 
 class SessionLock:
     """Prevents two turns on the same session from running at once (across
-    replicas). Optimistic versioning in Postgres is the second line of defence."""
+    replicas). Optimistic versioning in Postgres is the second line of defence.
+
+    The lock is short-lived and renewed by a heartbeat while the holder is
+    alive, so a turn may take longer than the TTL (slow models, retries), while
+    a crashed or killed process releases the session within `ttl_seconds`."""
 
     _RELEASE = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0"
+    _EXTEND = ("if redis.call('get', KEYS[1]) == ARGV[1] then "
+               "return redis.call('pexpire', KEYS[1], ARGV[2]) end return 0")
 
-    def __init__(self, r: redis_lib.Redis, ttl_seconds: int = 900):
+    def __init__(self, r: redis_lib.Redis, ttl_seconds: float = 120):
         self.r = r
         self.ttl = ttl_seconds
         self._release = r.register_script(self._RELEASE)
+        self._extend = r.register_script(self._EXTEND)
 
     @contextmanager
     def hold(self, session_id: str) -> Iterator[bool]:
         token = uuid.uuid4().hex
         key = f"lock:session:{session_id}"
-        acquired = bool(self.r.set(key, token, nx=True, ex=self.ttl))
+        acquired = bool(self.r.set(key, token, nx=True, px=int(self.ttl * 1000)))
+        stop = threading.Event()
+        beat: threading.Thread | None = None
+        if acquired:
+            def heartbeat() -> None:
+                while not stop.wait(self.ttl / 3):
+                    try:
+                        if not self._extend(keys=[key], args=[token, int(self.ttl * 1000)]):
+                            return  # lost the lock (expired or taken): nothing to renew
+                    except Exception:  # Redis hiccup: try again at the next beat
+                        log.warning("could not renew the lock of session %s", session_id)
+
+            beat = threading.Thread(target=heartbeat, name=f"lock-{session_id}", daemon=True)
+            beat.start()
         try:
             yield acquired
         finally:
+            stop.set()
+            if beat is not None:
+                beat.join(timeout=2)
             if acquired:
                 self._release(keys=[key], args=[token])
 
