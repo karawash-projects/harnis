@@ -15,8 +15,9 @@ image:
   pullPolicy: Never
 
 api:
-  # One replica: kind's default storage class (local-path) is ReadWriteOnce
-  # only, so session workspaces stay on a per-Pod emptyDir (see
+  # One API replica and one worker: kind's default storage class (local-path)
+  # is ReadWriteOnce only. That is enough here because the cluster has one
+  # node, so the API and the worker can both mount the workspaces volume (see
   # docs/kubernetes.md, "Session workspaces and multiple replicas").
   replicaCount: 1
   # The chart always renders ENV=production into its ConfigMap, which refuses
@@ -35,6 +36,27 @@ api:
       ephemeral-storage: 1Gi
   preStopSleepSeconds: 2
   terminationGracePeriodSeconds: 30
+
+# Turns run in a worker (TURN_EXECUTION=queue), so this flow tests the queue too.
+worker:
+  enabled: true
+  replicaCount: 1
+  concurrency: 2
+  extraEnv:
+    - name: ENV
+      value: development
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+workspaces:
+  persistence:
+    enabled: true
+    accessModes: ["ReadWriteOnce"]
+    size: 1Gi
 
 config:
   LLM_PROVIDERS: "mock"

@@ -143,7 +143,7 @@ jobs:
       - run: helm lint --strict deploy/helm/harnis
       - name: more than one replica needs shared storage; the maintenance job is not the API
         run: |
-          set -uo pipefail
+          set -euo pipefail
           if helm template h deploy/helm/harnis -n harnis --set api.replicaCount=2 >/dev/null 2>err.txt; then
             echo "expected the render to fail without shared workspace storage"; exit 1
           fi
@@ -152,6 +152,28 @@ jobs:
             --set workspaces.persistence.enabled=true >/dev/null
           # The CronJob loads ENV=production but not the API's secrets: it must run as a job.
           helm template h deploy/helm/harnis -n harnis | grep -A1 "name: COMPONENT" | grep -q '"job"'
+      - name: turn workers render only when enabled, and need shared storage
+        run: |
+          set -euo pipefail
+          helm template h deploy/helm/harnis -n harnis > default.yaml
+          if grep -q "harnis.worker" default.yaml; then echo "a worker is rendered by default"; exit 1; fi
+          grep -q 'TURN_EXECUTION: "inline"' default.yaml
+          if helm template h deploy/helm/harnis -n harnis --set worker.enabled=true >/dev/null 2>err.txt; then
+            echo "expected the render to fail: workers need shared workspace storage"; exit 1
+          fi
+          grep -q "worker.enabled needs shared workspace storage" err.txt
+          helm template h deploy/helm/harnis -n harnis --set worker.enabled=true \
+            --set workspaces.persistence.enabled=true > worker.yaml
+          grep -q 'TURN_EXECUTION: "queue"' worker.yaml
+          grep -q '"harnis.worker"' worker.yaml
+          python3 - <<'PY'
+          import yaml
+          docs = [d for d in yaml.safe_load_all(open("worker.yaml")) if d]
+          dep = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"].endswith("worker"))
+          spec = dep["spec"]["template"]["spec"]
+          assert spec["containers"][0]["command"] == ["python", "-m", "harnis.worker"]
+          assert any(v.get("persistentVolumeClaim") for v in spec["volumes"]), "workers must mount the shared workspaces"
+          PY
       - name: database CA bundle and driver settings render where they are used
         run: |
           set -euo pipefail

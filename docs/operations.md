@@ -106,6 +106,7 @@ The test suite includes an upgrade test (an older schema with data, migrated to 
 | `harnis_tool_calls_total{tool,outcome}`, `harnis_approvals_requested_total{tool}`, `harnis_approval_decisions_total{decision}` | agent actions and approvals |
 | `harnis_sandbox_runs_total{backend,kind,outcome}`, `harnis_sandbox_run_duration_seconds` | sandbox commands and installs |
 | `harnis_rate_limited_total`, `harnis_guardrail_events_total{kind}`, `harnis_cache_lookups_total{result}` | limits, guardrails, cache |
+| `harnis_turn_jobs_total{result}` | turn queue jobs: queued, done, skipped, failed, retried (queue mode; the API counts `queued`, workers the rest; set `WORKER_METRICS_PORT` to scrape a worker) |
 
 Suggested alerts (adapt thresholds to your traffic):
 
@@ -123,6 +124,17 @@ Suggested alerts (adapt thresholds to your traffic):
 ```
 
 Harnis also sends its own alerts (halted turns, open circuit breakers, slow spans) to `ALERT_WEBHOOK_URL`.
+
+## Turn workers (queue mode)
+
+By default the API runs each turn inside the HTTP request: simple, and fine for small deployments, but a long turn (model retries, a slow sandbox) holds a worker thread and an ingress connection for its whole duration, and all of them compete with `/ready` and the other endpoints. With `TURN_EXECUTION=queue` the API only records the turn; `python -m harnis.worker` (the chart's `worker.enabled=true`) runs it.
+
+- **Clients.** `POST /v1/sessions/{id}/turns` waits up to `TURN_WAIT_SECONDS` (default 25) and returns `200` with the finished turn, or `202` with the session still `running`; poll `GET /v1/sessions/{id}` or use the event stream. The console, the CLI, `harnis_check.py`, the evals and the load test do this. Custom clients must accept 202.
+- **What is queued.** A job is a pointer (tenant, session, and for a decided approval its id) in the `turn_jobs` table. The user's message, already redacted, is in the session's state; a decision is in the approvals table. The decision and its job are written in one transaction, so a decision cannot be recorded without its resume being scheduled.
+- **Failures.** A claim is a lease (`WORKER_LEASE_SECONDS`, default 120) renewed while the turn runs. If a worker dies, the lease runs out and another worker continues the session from its last checkpoint; after `WORKER_MAX_ATTEMPTS` (3) the session is marked failed. The stale-session reaper also drops the jobs of sessions it fails. A tool call that was in flight when the worker died can run again.
+- **Storage.** The API and the workers read and write the same session files, so the workspaces must be on shared storage (ReadWriteMany unless everything runs on one node). The chart refuses to render workers without it.
+- **Monitoring.** Alert on a growing backlog: `harnis_turn_queue_stats()` (database function) returns the number of waiting jobs and the age of the oldest; the age should stay near zero. `harnis_turn_jobs_total{result="retried"}` rising means workers are failing or crashing.
+- **Isolation.** Workers use the application role like the API. The one cross-tenant operation is the claim function, which returns ids only; everything else about a job runs inside the owning tenant's row-level-security context.
 
 ## Capacity and load testing
 

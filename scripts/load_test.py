@@ -41,6 +41,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harnis_check import Check, Client, mint  # noqa: E402  (same folder, standard library only)
 
 
+DONE = {"completed", "awaiting_approval", "rejected", "escalated", "failed"}
+
+
 class Stats:
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -121,8 +124,11 @@ class LoadTest:
         tok = self.tok(user, ["user"])
         r = self.timed("create_session", c, "POST", "/v1/sessions", tok, {}, ok=(201,))
         if r:
-            self.timed("turn_support", c, "POST", f"/v1/sessions/{r.json()['session_id']}/turns", tok,
-                       {"message": f"what are your opening hours? ({uuid.uuid4().hex[:6]})"})
+            sid = r.json()["session_id"]
+            t = self.timed("turn_support", c, "POST", f"/v1/sessions/{sid}/turns", tok,
+                           {"message": f"what are your opening hours? ({uuid.uuid4().hex[:6]})"}, ok=(200, 202))
+            if t and t.status == 202:  # queue mode: wait for the worker
+                self.wait_status(c, tok, sid, DONE, 0)
 
     def coding(self, user: str) -> None:
         i, c = self.client()
@@ -132,10 +138,14 @@ class LoadTest:
         if not r:
             return
         sid = r.json()["session_id"]
-        r = self.timed("turn_coding", c, "POST", f"/v1/sessions/{sid}/turns", tok, {"message": "create calc.py"})
+        r = self.timed("turn_coding", c, "POST", f"/v1/sessions/{sid}/turns", tok, {"message": "create calc.py"},
+                       ok=(200, 202))
         if not r:
             return
-        v = r.json()
+        v = r.json() if r.status == 200 else self.wait_status(c, tok, sid, DONE, 0)
+        if v is None:
+            self.stats.add("approval_flow", 0, False, "turn did not finish")
+            return
         for _ in range(4):
             if v["status"] != "awaiting_approval":
                 break

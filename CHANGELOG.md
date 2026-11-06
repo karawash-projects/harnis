@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-06
+
+### Added
+- **Optional turn queue and workers (`TURN_EXECUTION=queue`).** The API records a turn and returns; `python -m harnis.worker` (the chart's `worker.enabled=true`) runs it, so a long turn no longer holds an API thread, an ingress connection or a liveness probe. The request waits up to `TURN_WAIT_SECONDS` (default 25) and returns `200` with the finished turn, or `202` with the session still `running`. Jobs are pointers in a new `turn_jobs` table (migration `009_turn_queue.sql`, row-level security like every tenant table); claims are leases, so a worker that dies is replaced by another that continues from the last checkpoint; a decided approval and its resume job are written in one transaction. The default stays `inline`, so nothing changes unless you turn it on. See [operations](docs/operations.md#turn-workers-queue-mode).
+- Helm: a `worker` Deployment (off by default; needs shared workspace storage), included in the API's NetworkPolicy. The kind end-to-end flow now runs in queue mode.
+- Metric `harnis_turn_jobs_total{result}` and the database function `harnis_turn_queue_stats()` (waiting jobs and age of the oldest).
+
+### Changed
+- `POST /v1/sessions/{id}/turns` is `async` internally; its behaviour in `inline` mode is unchanged. In queue mode custom clients must accept `202` (the console, CLI, `harnis_check.py`, evals and load test do).
+
 ## [1.2.0] - 2026-11-06
 
 Fixes from an independent pre-production code review. Each item below was reproduced against 1.1.2 first.

@@ -1,0 +1,126 @@
+{{- if .Values.worker.enabled }}
+{{- $api := .Values.api -}}
+{{- $w := .Values.worker -}}
+# Runs queued turns (see `worker` in values.yaml). Same image, settings, secrets
+# and service account as the API; no Service, no ingress, no HTTP port.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "harnis.componentName" (list . "worker") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "harnis.componentLabels" (list . "worker") | nindent 4 }}
+spec:
+  replicas: {{ $w.replicaCount }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "harnis.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        {{- include "harnis.componentLabels" (list . "worker") | nindent 8 }}
+        {{- with $w.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if not .Values.secrets.existingSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with $w.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "harnis.serviceAccountName" . }}
+      # Workers talk to the Kubernetes API to run sandbox Pods.
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      # Running turns finish on SIGTERM; a forced stop is covered by the job lease.
+      terminationGracePeriodSeconds: {{ $w.terminationGracePeriodSeconds }}
+      {{- with $w.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $api.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "harnis.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "harnis.worker"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "harnis.configMapName" . }}
+            - secretRef:
+                name: {{ include "harnis.secretName" . }}
+            {{- with $api.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: HOME
+              value: /tmp
+            {{- with $api.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with $w.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          securityContext:
+            {{- toYaml $api.securityContext | nindent 12 }}
+          # The worker touches /tmp/harnis-worker-alive every 10 s; a hung process stops doing so.
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import os,sys,time; sys.exit(0 if time.time()-os.stat('/tmp/harnis-worker-alive').st_mtime < 120 else 1)"
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml $w.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: workspaces
+              mountPath: {{ .Values.workspaces.mountPath }}
+            {{- include "harnis.dbCaVolumeMount" . | indent 10 }}
+            {{- with $api.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ $api.tmpSizeLimit }}
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: {{ default (include "harnis.componentName" (list . "workspaces")) .Values.workspaces.persistence.existingClaim }}
+        {{- include "harnis.dbCaVolume" . | indent 6 }}
+        {{- with $api.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $w.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

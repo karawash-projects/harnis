@@ -213,6 +213,20 @@ class Settings(BaseSettings):
     cache_ttl_seconds: int = 24 * 3600
     cache_vector_type: str = "FLOAT32"  # FLOAT16 halves memory on RediSearch 2.10+
 
+    # --- Turn execution -----------------------------------------------------
+    # inline: the API runs each turn inside the HTTP request (default).
+    # queue: the API records the turn and a separate worker (`python -m harnis.worker`, the Helm
+    #   chart's worker Deployment) runs it; the request waits up to TURN_WAIT_SECONDS for the
+    #   result and otherwise returns 202 (poll GET /v1/sessions/{id} or use the event stream).
+    turn_execution: Literal["inline", "queue"] = "inline"
+    turn_wait_seconds: float = Field(25, ge=0, le=300)
+    worker_concurrency: int = Field(4, ge=1, le=64)
+    worker_poll_seconds: float = Field(0.5, gt=0)
+    # A worker that dies lets its lease run out and another continues from the last checkpoint.
+    worker_lease_seconds: int = Field(120, ge=10)
+    worker_max_attempts: int = Field(3, ge=1)
+    worker_metrics_port: int = Field(0, ge=0, le=65535)  # 0 = no metrics endpoint on the worker
+
     # --- Human-in-the-loop --------------------------------------------------
     approval_ttl_seconds: int = 3600
     # Deprecated: accept the token in the WebSocket URL (`/v1/ws?token=`). URLs are logged by

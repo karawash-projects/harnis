@@ -83,7 +83,18 @@ def wait_for_resume(c: Client, session_id: str, approval_id: str) -> dict:
     raise SystemExit("timed out waiting for the session to resume")
 
 
+def wait_while_running(c: Client, s: dict) -> dict:
+    """With a turn queue the API may answer 202 while a worker is still running the turn."""
+    for _ in range(1200):
+        if s["status"] != "running":
+            return s
+        time.sleep(0.5)
+        s = c.call("GET", f"/v1/sessions/{s['session_id']}")
+    raise SystemExit("timed out waiting for the turn to finish")
+
+
 def review_loop(c: Client, s: dict) -> dict:
+    s = wait_while_running(c, s)
     while s["status"] == "awaiting_approval":
         aw = s["awaiting"]
         pending = {a["approval_id"]: a for a in c.call("GET", "/v1/approvals")}

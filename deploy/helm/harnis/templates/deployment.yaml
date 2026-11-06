@@ -3,6 +3,9 @@
        one replica the session files must be on shared storage, or they are missing on the other Pod. */ -}}
 {{- $replicas := ternary (int .Values.autoscaling.minReplicas) (int $api.replicaCount) .Values.autoscaling.enabled -}}
 {{- $p := .Values.workspaces.persistence -}}
+{{- if and .Values.worker.enabled (not (or $p.existingClaim $p.enabled)) -}}
+{{- fail "worker.enabled needs shared workspace storage: the API and the workers read and write the same session files. Set workspaces.persistence.enabled=true (ReadWriteMany if they can run on different nodes) or workspaces.persistence.existingClaim." -}}
+{{- end -}}
 {{- if and (gt $replicas 1) (not (or $p.existingClaim (and $p.enabled (has "ReadWriteMany" $p.accessModes)))) -}}
 {{- fail "More than one API replica needs shared workspace storage: set workspaces.persistence.enabled=true with ReadWriteMany (or workspaces.persistence.existingClaim), or run one replica (api.replicaCount=1, autoscaling.enabled=false)." -}}
 {{- end -}}
