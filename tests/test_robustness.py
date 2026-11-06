@@ -142,7 +142,7 @@ def test_docker_unpersisted_run_never_downloads_the_workspace(tmp_path, monkeypa
         def put_archive(self, *a): return True
         def start(self): pass
         def wait(self, timeout=None): return {"StatusCode": 0}
-        def logs(self, **k): return b"ok"
+        def logs(self, **k): return iter([b"ok"])  # stream=True yields chunks
         def get_archive(self, *a): raise AssertionError("must not download the workspace")
         def kill(self): pass
         def remove(self, **k): pass

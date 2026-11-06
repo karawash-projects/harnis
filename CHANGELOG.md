@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- **Queue:** a turn job skipped because its tenant is disabled now fails the session at once instead of leaving it `running` until the reaper; a job whose session is busy on another worker is offered again after ~5 s (not after the whole lease) and does not use up an attempt.
+- **Sandbox output** is streamed and capped while it is read, so a chatty command can no longer fill the API's memory before the limit applies.
+- **Model output limit:** `LLM_MAX_TOKENS` (default 4096, was a fixed 2048). A reply cut off at the limit is flagged `output_truncated` and says so; a tool call cut off mid-arguments is never run.
+- **Migrations** take a database advisory lock, so two runners (pods starting together, a CronJob and a manual run) are serialised.
+- **Restore** no longer drops the live schema first: it is renamed aside and put back if `pg_restore` fails, and workspaces are unpacked beside the live folder and swapped in at the end.
+- **Metrics:** the HTTP `method` label is limited to real methods (anything else is `OTHER`), so it can't be used to grow the series count.
+- **Data lifecycle** (migration `010_review_fixes.sql`): erasure matches the user id literally (an id containing `%` or `_` no longer acts as a wildcard), scrubs `user_exported` audit events and revokes the API keys the user created; an API key's `last_used_at` is only updated after its secret matched; `harnis_delete_tenant` refuses to run inside a tenant-scoped transaction.
+- `release.yml` actions are pinned to commit SHAs.
+
 ## [1.3.0] - 2026-11-06
 
 ### Added

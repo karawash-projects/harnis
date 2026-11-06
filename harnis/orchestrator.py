@@ -111,6 +111,7 @@ class Limits:
     loop_threshold: int = 2
     auto_continue_max: int = 2
     reroute_from_support: bool = True
+    max_tokens: int = 4096  # output limit of each main model call
 
 
 @dataclass
@@ -381,13 +382,24 @@ class Orchestrator:
         st = rec.state
         system, _ = self._prompt(rec, st["agent"])
         tools = self.d.registry.tools_for(st["agent"])
-        req = LLMRequest(system=system, messages=clean_history(st["messages"]), tools=tools)
+        req = LLMRequest(system=system, messages=clean_history(st["messages"]), tools=tools,
+                         max_tokens=self.d.limits.max_tokens)
         resp = self._call_llm(rec, req)
         if resp is None:
             return END
+        truncated = resp.stop_reason == "max_tokens"
         content = [b for b in (resp.content or []) if not _empty_text(b)]
         if not content:  # providers reject an empty text block, so never store one
             content = [{"type": "text", "text": EMPTY_REPLY}]
+        if truncated:
+            st["flags"].append("output_truncated")
+        if truncated and resp.tool_calls:
+            # The arguments of the call that was cut off can't be trusted, so it is not run.
+            kept = [b for b in content if b["type"] != "tool_use"] or [{"type": "text", "text": EMPTY_REPLY}]
+            st["messages"].append(Message("assistant", kept).to_dict())
+            return self._halt(rec, "failed", "output_truncated",
+                              "Stopped: the model's reply was cut off at the output limit in the middle of a tool "
+                              "call. Ask for a smaller step.")
         st["messages"].append(Message("assistant", content).to_dict())
         if resp.tool_calls:
             st["pending_tool_calls"] = resp.tool_calls
@@ -407,6 +419,8 @@ class Orchestrator:
             st["messages"].append(Message("user", [{"type": "text", "text": CONTINUE_NUDGE}]).to_dict())
             return "agent"
         st["reply"] = resp.text or EMPTY_REPLY
+        if truncated:
+            st["reply"] += "\n\n[The reply was cut off at the output limit.]"
         return "respond"
 
     def tools(self, rec: SessionRecord) -> str:

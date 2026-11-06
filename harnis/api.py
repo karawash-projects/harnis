@@ -38,6 +38,7 @@ from .telemetry import setup_tracing
 from .tools import WorkspaceError, is_reserved, list_workspace, read_regular, read_text, safe_path, write_text
 
 log = logging.getLogger(__name__)
+_KNOWN_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 STATIC = Path(__file__).parent / "static"
 
 
@@ -173,7 +174,7 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
         cache=cache, publish=bus.publish, alert=alerts,
         limits=Limits(settings.max_steps_per_turn, settings.max_cost_usd_per_turn, settings.max_handoffs_per_turn,
                       settings.max_tool_calls_per_turn, settings.loop_window, settings.loop_repeat_threshold,
-                      settings.auto_continue_max, settings.reroute_from_support),
+                      settings.auto_continue_max, settings.reroute_from_support, settings.llm_max_tokens),
         registry=registry))
 
     @asynccontextmanager
@@ -246,9 +247,10 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
         response = await call_next(request)
         route = request.scope.get("route")
         template = getattr(route, "path", None) or "unmatched"  # templates, never raw paths (ids)
+        method = request.method if request.method in _KNOWN_METHODS else "OTHER"  # bounded label values
         if template != "/metrics":
-            metrics.HTTP_REQUESTS.labels(request.method, template, str(response.status_code)).inc()
-            metrics.HTTP_LATENCY.labels(request.method, template).observe(time.perf_counter() - started)
+            metrics.HTTP_REQUESTS.labels(method, template, str(response.status_code)).inc()
+            metrics.HTTP_LATENCY.labels(method, template).observe(time.perf_counter() - started)
         h = response.headers
         h.setdefault("X-Content-Type-Options", "nosniff")
         h.setdefault("Referrer-Policy", "no-referrer")

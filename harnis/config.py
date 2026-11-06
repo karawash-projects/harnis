@@ -136,6 +136,8 @@ class Settings(BaseSettings):
 
     # --- Budgets ------------------------------------------------------------
     max_steps_per_turn: int = 25
+    # Output limit of each main model call. A reply cut off at this limit is flagged, never silently dropped.
+    llm_max_tokens: int = Field(4096, ge=256, le=64000)
     max_cost_usd_per_turn: float = 2.00
     max_handoffs_per_turn: int = 6
     max_tool_calls_per_turn: int = 20

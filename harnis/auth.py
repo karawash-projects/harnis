@@ -27,6 +27,7 @@ import argparse
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 import time
@@ -38,6 +39,8 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .config import Settings, get_settings
+
+log = logging.getLogger(__name__)
 
 TENANT_ROLES = {"user", "reviewer", "admin"}
 ROLES = TENANT_ROLES | {"platform-admin"}
@@ -272,6 +275,10 @@ class Authenticator:
             raise _unauthorized("invalid API key")
         if not row["tenant_active"]:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant is disabled")
+        try:
+            self.store.touch_api_key(key_id)  # only after the secret matched
+        except Exception:
+            log.warning("could not record API key use", exc_info=True)
         roles = frozenset(r for r in row["roles"] if r in TENANT_ROLES)
         return Principal(user_id=f"key-{key_id}", tenant_id=row["tenant_id"], roles=roles, via="api_key",
                          owner=row.get("created_by"))

@@ -2,7 +2,10 @@
 # Copyright 2026 Ahmad Karawash
 """Restore drill: back up a database with data and workspaces, damage it,
 restore into it, and check everything is back and usable."""
+import hashlib
+import json
 import shutil
+import subprocess
 import uuid
 
 from harnis import pg as pgdrv
@@ -45,7 +48,7 @@ def test_backup_and_restore_drill(db, tmp_path):
 
         backup = create(tmp_path / "backups", owner, ws)
         manifest = verify(backup)
-        assert manifest["tenants"] == 1 and manifest["migrations"][-1].startswith("009")
+        assert manifest["tenants"] == 1 and manifest["migrations"][-1].startswith("010")
 
         # Disaster: data deleted, files lost, a tampered backup is refused.
         with pgdrv.connect(owner, autocommit=True) as c:
@@ -68,5 +71,32 @@ def test_backup_and_restore_drill(db, tmp_path):
         assert any(e["event_type"] == "session_created" for e in store.audit_events("acme"))
         # The restored database still enforces tenant isolation for the app role.
         assert store.load_session("globex", rec.session_id) is None
+    finally:
+        pool.close()
+
+
+def test_failed_restore_puts_the_current_data_and_workspaces_back(db, tmp_path):
+    owner, app = db
+    ws = tmp_path / "ws"
+    (ws / "acme" / "sess_x").mkdir(parents=True)
+    (ws / "acme" / "sess_x" / "keep.txt").write_text("live data")
+    pool = pgdrv.ConnectionPool(app, kwargs={"row_factory": pgdrv.dict_row}, min_size=1, max_size=2, open=True)
+    try:
+        rec = PgStore(pool).create_session("acme", "alice")
+        backup = create(tmp_path / "backups", owner, ws)
+        # A backup whose checksums are right but whose dump is not a dump: pg_restore fails after the schema swap.
+        (backup / "database.dump").write_bytes(b"not a postgres dump")
+        m = json.loads((backup / "manifest.json").read_text())
+        m["files"]["database.dump"] = {"sha256": hashlib.sha256(b"not a postgres dump").hexdigest(), "bytes": 19}
+        (backup / "manifest.json").write_text(json.dumps(m))
+        with pytest.raises(subprocess.CalledProcessError):
+            restore(backup, owner, ws, app_password="harnis_app")
+        pool.close()
+        pool = pgdrv.ConnectionPool(app, kwargs={"row_factory": pgdrv.dict_row}, min_size=1, max_size=2, open=True)
+        assert PgStore(pool).load_session("acme", rec.session_id).user_id == "alice"
+        assert (ws / "acme" / "sess_x" / "keep.txt").read_text() == "live data"
+        with pgdrv.connect(owner) as c:
+            leftovers = c.execute("SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'harnis_pre_restore_%'").fetchone()[0]
+        assert leftovers == 0
     finally:
         pool.close()

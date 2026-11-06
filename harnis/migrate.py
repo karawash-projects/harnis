@@ -41,34 +41,46 @@ def _ensure_roles(conn: pg.Connection, app_password: str) -> None:
     conn.execute(pg.sql.SQL("GRANT harnis_lifecycle TO {}").format(pg.sql.Identifier(conn.info.user)))
 
 
+_LOCK_KEY = "harnis.migrate"
+
+
 def apply_migrations(dsn: str | None = None, app_password: str | None = None,
                      up_to: str | None = None) -> list[str]:
     """Apply pending migrations in order (all, or up to and including `up_to`,
     e.g. "005"). Each runs in its own transaction and is recorded in
-    schema_migrations, so running this again only applies new files."""
+    schema_migrations, so running this again only applies new files. A session-level advisory lock serialises
+    concurrent runners (two pods starting together, a CronJob and a manual run)."""
     settings = get_settings()
     dsn = dsn or settings.migration_database_url
-    applied: list[str] = []
     with pg.connect(dsn, autocommit=True) as conn:
-        _ensure_roles(conn, app_password or settings.app_db_password)
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS schema_migrations ("
-            " name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
-        )
-        done = {r[0] for r in conn.execute("SELECT name FROM schema_migrations")}
-        files = sorted(
-            (f for f in resources.files("harnis.migrations").iterdir() if f.name.endswith(".sql")),
-            key=lambda f: f.name,
-        )
-        for f in files:
-            if up_to and f.name[:len(up_to)] > up_to:
-                break
-            if f.name in done:
-                continue
-            with conn.transaction():
-                conn.execute(f.read_text(encoding="utf-8"))
-                conn.execute("INSERT INTO schema_migrations (name) VALUES (%s)", (f.name,))
-            applied.append(f.name)
+        conn.execute("SELECT pg_advisory_lock(hashtext(%s))", (_LOCK_KEY,))
+        try:
+            return _apply_locked(conn, app_password or settings.app_db_password, up_to)
+        finally:
+            conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (_LOCK_KEY,))
+
+
+def _apply_locked(conn: pg.Connection, app_password: str, up_to: str | None) -> list[str]:
+    applied: list[str] = []
+    _ensure_roles(conn, app_password)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations ("
+        " name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
+    )
+    done = {r[0] for r in conn.execute("SELECT name FROM schema_migrations")}
+    files = sorted(
+        (f for f in resources.files("harnis.migrations").iterdir() if f.name.endswith(".sql")),
+        key=lambda f: f.name,
+    )
+    for f in files:
+        if up_to and f.name[:len(up_to)] > up_to:
+            break
+        if f.name in done:
+            continue
+        with conn.transaction():
+            conn.execute(f.read_text(encoding="utf-8"))
+            conn.execute("INSERT INTO schema_migrations (name) VALUES (%s)", (f.name,))
+        applied.append(f.name)
     return applied
 
 

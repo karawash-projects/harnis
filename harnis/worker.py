@@ -67,7 +67,16 @@ def process_job(app_state: Any, job: dict[str, Any], settings: Settings) -> str:
         return result
 
     rec = store.load_session(tenant, sid)
-    if rec is None or not store.tenant_active(tenant):
+    if rec is None:
+        return finish("skipped")
+    if not store.tenant_active(tenant):
+        # Don't leave the session `running` until the reaper finds it.
+        if rec.status in ("running", "awaiting_approval"):
+            rec.status = "failed"
+            rec.state["awaiting"], rec.state["approval_decision"] = None, None
+            rec.state["reply"] = "This account is disabled, so the turn was not run."
+            rec.state.setdefault("flags", []).append("tenant_disabled")
+            store.save_checkpoint(rec)
         return finish("skipped")
     if job["attempts"] > settings.worker_max_attempts:
         log.error("job %s for session %s gave up after %s attempts", job_id, sid, job["attempts"] - 1)
@@ -81,7 +90,8 @@ def process_job(app_state: Any, job: dict[str, Any], settings: Settings) -> str:
         return finish("failed")
     try:
         with locks.hold(sid) as acquired:
-            if not acquired:  # another worker (or an inline turn) has the session: the lease re-offers the job
+            if not acquired:  # another worker (or an inline turn) has the session: offer the job again shortly
+                store.defer_turn_job(tenant, job_id, settings.worker_lease_seconds)
                 metrics.JOBS.labels("retried").inc()
                 return "retried"
             rec = store.load_session(tenant, sid)  # re-read under the lock

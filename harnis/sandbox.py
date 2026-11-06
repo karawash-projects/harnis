@@ -253,6 +253,25 @@ def remove_symlinks(workspace: Path) -> int:
     return n
 
 
+_LOG_COUNT_CAP = 8 * 1024 * 1024  # past the limit we count (not keep) at most this much more
+
+
+def read_capped_logs(container, limit: int) -> tuple[bytes, int]:
+    """Stream the container's output and keep only `limit` bytes. Returns (kept, bytes dropped), where the
+    count stops growing at _LOG_COUNT_CAP, so a chatty command can't fill the API's memory."""
+    kept = bytearray()
+    dropped = 0
+    for chunk in container.logs(stdout=True, stderr=True, stream=True, follow=False):
+        room = limit - len(kept)
+        if room > 0:
+            kept += chunk[:room]
+            chunk = chunk[room:]
+        dropped += len(chunk)
+        if dropped >= _LOG_COUNT_CAP:
+            break
+    return bytes(kept), dropped
+
+
 class _CappedSpool:
     """Receives the container's tar stream into a temporary file and stops as
     soon as it exceeds the limit, so a huge (or sparse) file can't exhaust the
@@ -538,10 +557,10 @@ class DockerSandbox:
                         container.kill()
                     except Exception:
                         pass
-                raw = container.logs(stdout=True, stderr=True) or b""
-                output = raw[: self.output_limit].decode("utf-8", errors="replace")
-                if len(raw) > self.output_limit:
-                    output += f"\n... [truncated {len(raw) - self.output_limit} bytes]"
+                raw, dropped = read_capped_logs(container, self.output_limit)
+                output = raw.decode("utf-8", errors="replace")
+                if dropped:
+                    output += f"\n... [truncated {dropped}{'+' if dropped >= _LOG_COUNT_CAP else ''} bytes]"
                 if timed_out:
                     output += f"\n[killed after {timeout}s timeout]"
                 if mode == "copy" and (persist or egress):

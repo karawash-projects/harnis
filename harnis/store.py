@@ -152,6 +152,15 @@ class PgStore:
         with self._tx(tenant_id) as conn:
             conn.execute("UPDATE turn_jobs SET claimed_at = now() WHERE job_id = %s", (job_id,))
 
+    def defer_turn_job(self, tenant_id: str, job_id: str, lease_seconds: int, retry_after: int = 5) -> None:
+        """Another worker holds the session: offer the job again in `retry_after` seconds (not after a whole lease)
+        and don't count this claim as an attempt."""
+        with self._tx(tenant_id) as conn:
+            conn.execute(
+                "UPDATE turn_jobs SET claimed_at = now() - make_interval(secs => greatest(%s - %s, 0)),"
+                " attempts = greatest(attempts - 1, 0) WHERE job_id = %s",
+                (lease_seconds, retry_after, job_id))
+
     def finish_turn_job(self, tenant_id: str, job_id: str) -> None:
         with self._tx(tenant_id) as conn:
             conn.execute("DELETE FROM turn_jobs WHERE job_id = %s", (job_id,))
@@ -241,6 +250,10 @@ class PgStore:
         with self._platform() as conn:
             return conn.execute("SELECT * FROM harnis_resolve_api_key(%s)", (key_id,)).fetchone()
 
+    def touch_api_key(self, key_id: str) -> None:
+        with self._platform() as conn:
+            conn.execute("SELECT harnis_touch_api_key(%s)", (key_id,))
+
     def create_api_key(self, tenant_id: str, key_id: str, name: str, secret_hash: str, roles: list[str],
                        created_by: str, expires_in_days: int | None) -> dict[str, Any]:
         with self._tx(tenant_id) as conn:
@@ -324,7 +337,10 @@ class PgStore:
 
     def erase_user(self, tenant_id: str, user_id: str, actor: str) -> dict[str, Any]:
         with self._tx(tenant_id) as conn:
-            return conn.execute("SELECT harnis_erase_user(%s, %s) AS r", (user_id, actor)).fetchone()["r"]
+            r = conn.execute("SELECT harnis_erase_user(%s, %s) AS r", (user_id, actor)).fetchone()["r"]
+            # Same transaction: scrub export events that quote the user id and revoke the keys they created.
+            conn.execute("SELECT harnis_erase_user_residue(%s, %s)", (user_id, r["alias"]))
+            return r
 
     def delete_tenant(self, tenant_id: str, actor: str) -> dict[str, Any] | None:
         """Deletes a disabled tenant and all its data. Raises ValueError if it is active."""

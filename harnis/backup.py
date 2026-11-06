@@ -90,36 +90,16 @@ def verify(backup: Path) -> dict:
     return manifest
 
 
-def restore(backup: Path, dsn: str, workspaces: Path, pg_bin: str = "", app_password: str | None = None) -> dict:
-    from .migrate import _ensure_roles, apply_migrations
-
-    manifest = verify(backup)
-    prefix = shlex.split(pg_bin)
-    with pg.connect(dsn, autocommit=True) as conn:
-        _ensure_roles(conn, app_password or get_settings().app_db_password)  # roles are cluster-wide
-        # Restore into an empty schema. (`pg_restore --clean` can't drop the
-        # inherited constraints of the partitioned token ledger.)
-        conn.execute("DROP SCHEMA IF EXISTS public CASCADE")
-        conn.execute("CREATE SCHEMA public")
-        # Match a fresh database's `public` schema: the dump only records
-        # privileges that differ from that default.
-        conn.execute("GRANT USAGE ON SCHEMA public TO PUBLIC")
-        if conn.info.server_version >= 150000:
-            conn.execute("ALTER SCHEMA public OWNER TO pg_database_owner")
-    with (backup / "database.dump").open("rb") as f:
-        subprocess.run([*prefix, "pg_restore", "--single-transaction", "--exit-on-error",
-                        "--dbname", _dsn_for(prefix, dsn)], stdin=f, check=True)
-    root = workspaces.resolve()
-    with tarfile.open(backup / "workspaces.tar.gz", "r:gz") as tar:
+def _extract_workspaces(archive: Path, dest_root: Path) -> None:
+    """Unpack the workspaces archive into `dest_root` (created here), skipping anything outside it."""
+    root = dest_root.resolve()
+    with tarfile.open(archive, "r:gz") as tar:
         members = []
         for m in tar.getmembers():
             parts = Path(m.name).parts
             if not parts or parts[0] != "workspaces" or ".." in parts or not (m.isfile() or m.isdir()):
                 continue
             members.append(m)
-        if root.exists():
-            import shutil
-            shutil.rmtree(root)
         root.mkdir(parents=True)
         for m in members:
             rel = Path(*Path(m.name).parts[1:]) if len(Path(m.name).parts) > 1 else Path()
@@ -133,6 +113,50 @@ def restore(backup: Path, dsn: str, workspaces: Path, pg_bin: str = "", app_pass
                 src = tar.extractfile(m)
                 if src is not None:
                     dest.write_bytes(src.read())
+
+
+def restore(backup: Path, dsn: str, workspaces: Path, pg_bin: str = "", app_password: str | None = None) -> dict:
+    """Restore a backup. Nothing of the current data is destroyed until the restore has succeeded: the current
+    `public` schema is renamed aside (needs room for both copies) and put back if pg_restore fails; the workspaces
+    are unpacked beside the live folder and swapped in at the end."""
+    import shutil
+
+    from .migrate import _ensure_roles, apply_migrations
+
+    manifest = verify(backup)
+    prefix = shlex.split(pg_bin)
+    stamp = time.strftime("%Y%m%d%H%M%S")
+    aside = f"harnis_pre_restore_{stamp}"
+    root = workspaces.resolve()
+    staging = root.parent / f".{root.name}.restore-{stamp}"
+    try:
+        _extract_workspaces(backup / "workspaces.tar.gz", staging)  # fails before the database is touched
+        with pg.connect(dsn, autocommit=True) as conn:
+            _ensure_roles(conn, app_password or get_settings().app_db_password)  # roles are cluster-wide
+            # (`pg_restore --clean` can't drop the inherited constraints of the partitioned token ledger, so the
+            # restore goes into an empty schema.)
+            conn.execute(f'ALTER SCHEMA public RENAME TO "{aside}"')
+            try:
+                conn.execute("CREATE SCHEMA public")
+                # Match a fresh database's `public` schema: the dump only records privileges that differ from that.
+                conn.execute("GRANT USAGE ON SCHEMA public TO PUBLIC")
+                if conn.info.server_version >= 150000:
+                    conn.execute("ALTER SCHEMA public OWNER TO pg_database_owner")
+                with (backup / "database.dump").open("rb") as f:
+                    subprocess.run([*prefix, "pg_restore", "--single-transaction", "--exit-on-error",
+                                    "--dbname", _dsn_for(prefix, dsn)], stdin=f, check=True)
+            except BaseException:
+                conn.execute("DROP SCHEMA IF EXISTS public CASCADE")
+                conn.execute(f'ALTER SCHEMA "{aside}" RENAME TO public')
+                raise
+            conn.execute(f'DROP SCHEMA "{aside}" CASCADE')
+        old = root.parent / f".{root.name}.replaced-{stamp}"
+        if root.exists():
+            root.rename(old)
+        staging.rename(root)
+        shutil.rmtree(old, ignore_errors=True)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     newer = apply_migrations(dsn, app_password=app_password)
     with pg.connect(dsn, autocommit=True) as conn:
         conn.execute("SET ROLE harnis_analytics")
