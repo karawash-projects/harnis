@@ -109,6 +109,19 @@ def test_existing_files_visible_and_deletions_synced(sb, tmp_path):
     assert (tmp_path / "sub" / "new.txt").read_text(encoding="utf-8").strip() == "new"
 
 
+def test_unpersisted_run_cannot_change_the_workspace(sb, tmp_path):
+    """persist=False (the approval-free test run): the command may write, edit and delete
+    inside the sandbox, but none of it reaches the host workspace, in either mode."""
+    (tmp_path / "approved.py").write_text("x = 1\n")
+    (tmp_path / "other.py").write_text("y = 2\n")
+    r = sb.run("echo 'x = 666' > approved.py; rm other.py; echo new > planted.py; cat approved.py",
+               tmp_path, persist=False)
+    assert r.ok and "x = 666" in r.output  # the command saw its own changes
+    assert (tmp_path / "approved.py").read_text() == "x = 1\n"
+    assert (tmp_path / "other.py").read_text() == "y = 2\n"
+    assert not (tmp_path / "planted.py").exists()
+
+
 def test_symlink_created_in_sandbox_never_escapes_to_host(tmp_path):
     """copy mode: a link to /etc made by untrusted code is dropped on the way back."""
     try:

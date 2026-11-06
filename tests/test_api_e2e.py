@@ -161,10 +161,12 @@ def test_websocket_rejects_bad_token_and_streams_events(client):
     from starlette.websockets import WebSocketDisconnect
 
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect("/v1/ws?token=garbage") as ws:
+        with client.websocket_connect("/v1/ws") as ws:
+            ws.send_json({"type": "auth", "token": 'garbage'})
             ws.receive_text()
     token = mint_token("alice", "acme", ["user"])
-    with client.websocket_connect(f"/v1/ws?token={token}") as ws:
+    with client.websocket_connect("/v1/ws") as ws:
+        ws.send_json({"type": "auth", "token": token})
         assert '"hello"' in ws.receive_text()
         sid = client.post("/v1/sessions", json={}, headers=h("alice")).json()["session_id"]
         client.post(f"/v1/sessions/{sid}/turns", json={"message": "hello"}, headers=h("alice"))
@@ -190,3 +192,28 @@ def test_dev_token_in_development(app_pool, redis_client, tmp_path):
         # Requests that don't come from this machine get nothing.
         with TestClient(app, client=("203.0.113.9", 5000)) as remote:
             assert remote.post("/dev/token").status_code == 404
+
+
+def test_websocket_token_is_not_accepted_in_the_url(client):
+    """URLs are logged by servers and proxies, so the token must not travel in one."""
+    from starlette.websockets import WebSocketDisconnect
+
+    token = mint_token("alice", "acme", ["user"])
+    with pytest.raises(WebSocketDisconnect) as e:
+        with client.websocket_connect(f"/v1/ws?token={token}") as ws:
+            ws.receive_text()
+    assert e.value.code == 4401
+    with pytest.raises(WebSocketDisconnect) as e:  # connected but never authenticated: closed, not left open
+        with client.websocket_connect("/v1/ws") as ws:
+            ws.send_json({"type": "hello"})
+            ws.receive_text()
+    assert e.value.code == 4401
+
+
+def test_health_runs_on_the_event_loop_not_in_the_worker_thread_pool(client):
+    """/health is async, so busy worker threads (long turns) can't stall liveness probes."""
+    import inspect
+
+    endpoint = next(r.endpoint for r in client.app.routes if getattr(r, "path", "") == "/health")
+    assert inspect.iscoroutinefunction(endpoint)
+    assert client.get("/health").json() == {"status": "ok"}

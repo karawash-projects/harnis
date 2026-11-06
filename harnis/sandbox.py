@@ -124,7 +124,7 @@ class SandboxResult:
 
 class Sandbox(Protocol):
     def run(self, command: str, workspace: Path, timeout: int | None = None, *,
-            egress: bool = False) -> SandboxResult: ...
+            egress: bool = False, persist: bool = True) -> SandboxResult: ...
 
 
 class WorkspaceTooLarge(Exception):
@@ -465,12 +465,16 @@ class DockerSandbox:
             return "?"
 
     def run(self, command: str, workspace: Path, timeout: int | None = None, *,
-            egress: bool = False) -> SandboxResult:
+            egress: bool = False, persist: bool = True) -> SandboxResult:
+        """persist=False: nothing the command changes is copied back to the
+        workspace (used for runs that need no approval, such as the test run:
+        it executes workspace code, so it must not be able to edit files that
+        a reviewer approved or never saw). It implies copy mode."""
         from docker.types import Mount
 
         timeout = timeout or (self.install_timeout if egress else self.timeout)
         # Installs always use copy mode, so only .harnis/deps can change on the host.
-        mode = "copy" if egress else self.mode
+        mode = "copy" if (egress or not persist) else self.mode
         run_network = None
         workspace = workspace.resolve()
         start = time.monotonic()
@@ -540,7 +544,7 @@ class DockerSandbox:
                     output += f"\n... [truncated {len(raw) - self.output_limit} bytes]"
                 if timed_out:
                     output += f"\n[killed after {timeout}s timeout]"
-                if mode == "copy":
+                if mode == "copy" and (persist or egress):
                     chunks, _stat = container.get_archive(WORKDIR)
                     cap = (self.max_bytes + self.deps_max_bytes
                            + 1024 * (self.max_files + self.deps_max_files + 64) + 1_048_576)
@@ -550,7 +554,7 @@ class DockerSandbox:
                                          self.deps_max_bytes, self.deps_max_files, only_deps=egress)
                     finally:
                         spool.close()
-                else:
+                elif mode == "bind":
                     remove_symlinks(workspace)
                 result = SandboxResult(exit_code, output, timed_out, int((time.monotonic() - start) * 1000))
             except Exception as exc:

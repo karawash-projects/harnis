@@ -152,6 +152,24 @@ def workspace_for(base: Path, tenant_id: str, session_id: str) -> Path:
 # ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
+EMPTY_REPLY = "(The model returned no answer. Please try rephrasing.)"
+
+
+def _empty_text(block: dict[str, Any]) -> bool:
+    return block.get("type") == "text" and not str(block.get("text", "")).strip()
+
+
+def clean_history(messages: list[dict[str, Any]]) -> list[Message]:
+    """Messages for the provider: empty text blocks are dropped (Anthropic
+    rejects them with a 400 that never fails over), including ones stored by
+    older versions, so a session is not stuck by its own history."""
+    out: list[Message] = []
+    for m in messages:
+        blocks = [b for b in m["content"] if not _empty_text(b)]
+        out.append(Message(m["role"], blocks or [{"type": "text", "text": EMPTY_REPLY}]))
+    return out
+
+
 class Orchestrator:
     def __init__(self, deps: Deps):
         self.d = deps
@@ -169,6 +187,10 @@ class Orchestrator:
         if rec.status in ("awaiting_approval", "running"):
             raise ConflictError(f"session is {rec.status}")
         st = rec.state
+        # A turn that was cut off (crash, restart, reaped as stale) may have left tool calls
+        # without results; the provider rejects such a history, so close them first.
+        self._close_pending(st, "the previous turn was interrupted")
+        st["awaiting"], st["approval_decision"] = None, None
         st["turn"] = {"input": user_text, "steps": 0, "cost_usd": 0.0, "handoffs": 0, "tool_calls": 0,
                       "used_tools": False, "loop_trips": 0, "cache_hit": False,
                       "started_at": time.time()}
@@ -205,7 +227,16 @@ class Orchestrator:
                     break
                 turn["steps"] += 1
                 with tracer.start_as_current_span(f"harnis.node.{node}"):
-                    nxt = self.nodes[node](rec)
+                    try:
+                        nxt = self.nodes[node](rec)
+                    except Exception as exc:
+                        # Anything unexpected (a tool, a plugin's describe(), the store) must not
+                        # leave the session "running" forever: end the turn as failed instead.
+                        log.exception("node %s failed for session %s", node, rec.session_id)
+                        span.record_exception(exc)
+                        nxt = self._halt(rec, "failed", "internal_error",
+                                         "Something went wrong while handling this request. "
+                                         "The error was logged; please try again.")
                 self.d.publish(rec.tenant_id, f"user:{rec.user_id}",
                                {"type": "node", "session_id": rec.session_id, "node": node, "next": nxt})
                 rec.current_node = nxt if nxt not in (END, SUSPEND) else node
@@ -234,13 +265,7 @@ class Orchestrator:
         # Every tool_use the model emitted must get a tool_result, or the next
         # LLM call on this conversation is rejected by the provider.
         st = rec.state
-        if st.get("pending_tool_calls"):
-            done = {r["tool_use_id"] for r in st["tool_results"]}
-            for call in st["pending_tool_calls"]:
-                if call["id"] not in done:
-                    st["tool_results"].append({"type": "tool_result", "tool_use_id": call["id"],
-                                               "content": f"not executed: {reason}", "is_error": True})
-            self._flush_results(st)
+        self._close_pending(st, reason)
         st["awaiting"], st["approval_decision"] = None, None
         rec.status = status
         rec.state["reply"] = reply
@@ -249,6 +274,15 @@ class Orchestrator:
         if status in ("failed", "escalated", "rejected"):
             self.d.alert(reason, rec.tenant_id, rec.session_id, {"status": status})
         return END
+
+    def _close_pending(self, st: dict[str, Any], reason: str) -> None:
+        if st.get("pending_tool_calls"):
+            done = {r["tool_use_id"] for r in st["tool_results"]}
+            for call in st["pending_tool_calls"]:
+                if call["id"] not in done:
+                    st["tool_results"].append({"type": "tool_result", "tool_use_id": call["id"],
+                                               "content": f"not executed: {reason}", "is_error": True})
+            self._flush_results(st)
 
     # -- nodes -----------------------------------------------------------------
     def ingest(self, rec: SessionRecord) -> str:
@@ -335,11 +369,14 @@ class Orchestrator:
         st = rec.state
         system, _ = self._prompt(rec, st["agent"])
         tools = self.d.registry.tools_for(st["agent"])
-        req = LLMRequest(system=system, messages=[Message.from_dict(m) for m in st["messages"]], tools=tools)
+        req = LLMRequest(system=system, messages=clean_history(st["messages"]), tools=tools)
         resp = self._call_llm(rec, req)
         if resp is None:
             return END
-        st["messages"].append(Message("assistant", resp.content or [{"type": "text", "text": ""}]).to_dict())
+        content = [b for b in (resp.content or []) if not _empty_text(b)]
+        if not content:  # providers reject an empty text block, so never store one
+            content = [{"type": "text", "text": EMPTY_REPLY}]
+        st["messages"].append(Message("assistant", content).to_dict())
         if resp.tool_calls:
             st["pending_tool_calls"] = resp.tool_calls
             st["tool_results"] = []
@@ -357,7 +394,7 @@ class Orchestrator:
             st["flags"].append("auto_continue")
             st["messages"].append(Message("user", [{"type": "text", "text": CONTINUE_NUDGE}]).to_dict())
             return "agent"
-        st["reply"] = resp.text
+        st["reply"] = resp.text or EMPTY_REPLY
         return "respond"
 
     def tools(self, rec: SessionRecord) -> str:
@@ -396,11 +433,16 @@ class Orchestrator:
                 result(f"invalid arguments for {name}: {exc}", True)
                 continue
 
+            # Resuming an approved call: it was counted when first requested.
+            aw0, dec0 = st.get("awaiting"), st.get("approval_decision")
+            resuming = bool(aw0 and dec0 and aw0["tool_use_id"] == call["id"])
+
             # Loop breaker: identical (tool, args) repeated inside the window.
             fp = hashlib.sha256(f"{name}:{json.dumps(args, sort_keys=True)}".encode()).hexdigest()[:16]
             window = st["loop_fingerprints"][-self.d.limits.loop_window:]
-            st["loop_fingerprints"] = (window + [fp])[-self.d.limits.loop_window:]
-            if window.count(fp) >= self.d.limits.loop_threshold:
+            if not resuming:
+                st["loop_fingerprints"] = (window + [fp])[-self.d.limits.loop_window:]
+            if not resuming and window.count(fp) >= self.d.limits.loop_threshold:
                 turn["loop_trips"] += 1
                 if turn["loop_trips"] >= 2:
                     return self._halt(rec, "escalated", "loop_detected",
@@ -409,7 +451,8 @@ class Orchestrator:
                        f"{window.count(fp)} times. Change your approach or explain what is blocking you.", True)
                 continue
 
-            turn["tool_calls"] += 1
+            if not resuming:
+                turn["tool_calls"] += 1
             turn["used_tools"] = True
             if turn["tool_calls"] > self.d.limits.max_tool_calls:
                 return self._halt(rec, "failed", "tool_budget_exceeded",

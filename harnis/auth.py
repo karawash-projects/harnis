@@ -73,8 +73,10 @@ def safe_id(value: str) -> str:
     stable one (IdP subjects like `auth0|5f2...` or e-mail addresses)."""
     value = str(value)
     # A value that already looks like a derived id is derived again, so a
-    # literal claim can never equal another user's derived id.
-    if _ID.match(value) and not _DERIVED.search(value):
+    # literal claim can never equal another user's derived id. The `key-`
+    # prefix belongs to API-key principals (`key-<key_id>`): an IdP user named
+    # `key-...` must not become the same principal as that key.
+    if _ID.match(value) and not _DERIVED.search(value) and not value.startswith("key-"):
         return value
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-.")[:40] or "id"
     return f"{slug}-{hashlib.sha256(value.encode()).hexdigest()[:10]}"
@@ -198,6 +200,16 @@ class OIDCVerifier:
             raise _unauthorized("invalid token: unknown signing key")
         return keys[kid]
 
+    def _map_roles(self, raw: list[Any]) -> set[str]:
+        roles: set[str] = set()
+        for value in raw:
+            mapped = self.role_map.get(str(value), str(value) if not self.role_map else None)
+            if mapped == "platform-admin" and str(value) not in self.role_map:
+                continue  # platform admin is never taken from an IdP role name as-is: map it explicitly
+            if mapped in ROLES:
+                roles.add(mapped)
+        return roles
+
     def verify(self, token: str) -> Principal:
         s = self.s
         key = self._key_for(token)
@@ -217,11 +229,7 @@ class OIDCVerifier:
         raw = _claim(claims, s.oidc_roles_claim) or []
         if isinstance(raw, str):
             raw = raw.replace(",", " ").split()
-        roles = set()
-        for value in raw:
-            mapped = self.role_map.get(str(value), str(value) if not self.role_map else None)
-            if mapped in ROLES:
-                roles.add(mapped)
+        roles = self._map_roles(raw)
         if not roles and s.oidc_default_role in ROLES:
             roles.add(s.oidc_default_role)
         return Principal(user_id=safe_id(user), tenant_id=safe_id(tenant), roles=frozenset(roles), via="oidc")

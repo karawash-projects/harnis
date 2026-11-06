@@ -27,8 +27,10 @@ imagePullSecrets: []
 # -----------------------------------------------------------------------------
 api:
   # Ignored when autoscaling.enabled is true. More than one replica needs
-  # shared workspace storage: see `workspaces` below.
-  replicaCount: 2
+  # shared ReadWriteMany workspace storage (see `workspaces` below); the chart
+  # refuses to render otherwise, because an approval handled by another replica
+  # would resume without the session's files.
+  replicaCount: 1
 
   # Override the image's command/args (default: uvicorn on port 8000).
   command: []
@@ -438,6 +440,7 @@ ingress:
 
 autoscaling:
   enabled: false
+  # Needs workspaces.persistence (ReadWriteMany) when above 1.
   minReplicas: 2
   maxReplicas: 10
   targetCPUUtilizationPercentage: 70

@@ -29,7 +29,8 @@ def test_metrics_need_a_token_when_set_and_in_production(tmp_path):
         assert c.get("/metrics").status_code == 401
         assert c.get("/metrics", headers={"Authorization": "Bearer nope"}).status_code == 401
         assert c.get("/metrics", headers={"Authorization": "Bearer s3cret"}).status_code == 200
-    prod = dict(env="production", jwt_secret="x" * 40, llm_providers="anthropic")
+    prod = dict(env="production", jwt_secret="x" * 40, llm_providers="anthropic",
+            database_url="postgresql://harnis_app:a-long-random-password@db:5432/harnis")
     from harnis.llm.types import LLMResponse, Usage
 
     class P:

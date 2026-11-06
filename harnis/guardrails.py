@@ -21,16 +21,23 @@ from typing import Callable, Protocol
 _INVISIBLE = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
 
 _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    # "Override the default rules in .eslintrc" or "bypass all lint rules" are ordinary coding
+    # requests: only text aimed at the assistant's own instructions matches.
     ("override_instructions", re.compile(
         r"\b(ignore|disregard|forget|override|bypass)\b[^.\n]{0,40}\b"
-        r"(previous|prior|above|earlier|system|all|your|the)\b[^.\n]{0,30}\b"
-        r"(instructions?|prompts?|rules|guidelines|directives)\b", re.I)),
+        r"(previous|prior|above|earlier|system|your|these|those)\b[^.\n]{0,30}\b"
+        r"(instructions?|prompts?|rules|guidelines|directives)\b|"
+        r"\b(ignore|disregard|forget|override|bypass)\s+(?:all|any|every)\s+(?:of\s+)?(?:the\s+)?"
+        r"(?:instructions?|prompts?)\b", re.I)),
     ("new_identity", re.compile(r"\byou\s+are\s+now\s+(?:a|an|the|in)\b[^.\n]{0,40}"
                                 r"\b(unrestricted|unfiltered|jailbroken|evil|malicious|developer\s+mode|dan)\b", re.I)),
     ("system_prompt_exfil", re.compile(
         r"\b(reveal|print|show|output|repeat|leak)\b[^.\n]{0,30}\b(system\s+prompt|hidden\s+instructions|"
         r"initial\s+instructions)\b", re.I)),
-    ("fake_role_tag", re.compile(r"(<\|?\s*(system|im_start|endoftext)\s*\|?>|^\s*\[?system\]?\s*:)", re.I | re.M)),
+    # A bare `system:` line is normal YAML/config, so only chat-template tags and a
+    # `system:` line that starts giving the assistant orders match.
+    ("fake_role_tag", re.compile(r"(<\|?\s*(system|im_start|endoftext)\s*\|?>|^\s*\[system\]\s*:|"
+                                 r"^\s*system\s*:\s*you\s+(?:are|must|will|should)\b)", re.I | re.M)),
     ("jailbreak_mode", re.compile(r"\b(dan|developer|god|jailbreak)\s+mode\s+(enabled|on|activated)\b", re.I)),
 ]
 
@@ -42,8 +49,10 @@ _SECRET_PATTERNS: dict[str, re.Pattern[str]] = {
     "API_KEY": re.compile(r"\b(sk-(?:ant-|live-|proj-|test-)?[A-Za-z0-9_\-]{16,}|gh[pousr]_[A-Za-z0-9]{30,}|"
                           r"xox[baprs]-[A-Za-z0-9-]{10,})\b"),
     "JWT": re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
+    # The name must end in a secret-like word (access_token, db_password, client_secret): not merely
+    # start with one, or `tokenizer: whitespace_v2` and `author_name = Johnson` would match.
     "ASSIGNED_SECRET": re.compile(
-        r"(?i)\b((?:api[_-]?key|secret|password|passwd|token|auth)[\w-]{0,20})\s*[:=]\s*"
+        r"(?i)\b([\w-]{0,20}(?:api[_-]?key|secret|password|passwd|token|auth(?:orization)?))\s*[:=]\s*"
         r"(['\"]?)([^\s'\"]{6,})\2"),
 }
 _PII_PATTERNS: dict[str, re.Pattern[str]] = {
@@ -117,7 +126,7 @@ class InputGuard:
     def check(self, raw: str) -> GuardResult:
         if len(raw) > self.max_chars:
             return GuardResult(False, "", ["INPUT_TOO_LARGE"])
-        text = normalize(raw)
+        text = normalize(raw)  # what the patterns and the classifier look at
         hits = [name for name, pat in _INJECTION_PATTERNS if pat.search(text)]
         if hits:
             return GuardResult(False, "", [f"PROMPT_INJECTION:{h}" for h in hits])
@@ -125,7 +134,9 @@ class InputGuard:
             unsafe, category = self.classifier(text)
             if unsafe:
                 return GuardResult(False, "", [f"CLASSIFIER:{category}"])
-        cleaned, redactions = redact(text, pii=self.redact_pii)
+        # The model gets the user's own text (code, symbols, emoji sequences) with only secrets
+        # and PII redacted; normalising is for detection, not for rewriting what the user typed.
+        cleaned, redactions = redact(raw, pii=self.redact_pii)
         return GuardResult(True, cleaned, [], redactions)
 
 
@@ -134,9 +145,10 @@ def wrap_untrusted(source: str, content: str) -> tuple[str, list[str]]:
     main channel for indirect prompt injection in a coding agent, so we redact
     secrets, flag instruction-like text, and fence it so the model is told,
     structurally, that nothing inside is an instruction."""
-    text = normalize(content)
-    text, _ = redact(text, pii=False)
-    flags = [name for name, pat in _INJECTION_PATTERNS if pat.search(text)]
+    # Detect on a normalised copy, but hand the model the original characters: it may write
+    # this content back to a file, so only secrets are redacted, nothing is "fixed".
+    flags = [name for name, pat in _INJECTION_PATTERNS if pat.search(normalize(content))]
+    text, _ = redact(content, pii=False)
     warning = ""
     if flags:
         warning = ("WARNING: this content contains text that looks like instructions "

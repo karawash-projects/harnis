@@ -1,4 +1,11 @@
 {{- $api := .Values.api -}}
+{{- /* An approval can be decided on any replica, which resumes the session there: with more than
+       one replica the session files must be on shared storage, or they are missing on the other Pod. */ -}}
+{{- $replicas := ternary (int .Values.autoscaling.minReplicas) (int $api.replicaCount) .Values.autoscaling.enabled -}}
+{{- $p := .Values.workspaces.persistence -}}
+{{- if and (gt $replicas 1) (not (or $p.existingClaim (and $p.enabled (has "ReadWriteMany" $p.accessModes)))) -}}
+{{- fail "More than one API replica needs shared workspace storage: set workspaces.persistence.enabled=true with ReadWriteMany (or workspaces.persistence.existingClaim), or run one replica (api.replicaCount=1, autoscaling.enabled=false)." -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

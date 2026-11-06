@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-06
+
+Fixes from an independent pre-production code review. Each item below was reproduced against 1.1.2 first.
+
+### Security
+- **Approval-free test runs can no longer change the workspace.** `run_tests` needs no approval but runs workspace code, and its file changes were copied back (bind mode wrote the host folder directly), so one approved test file could rewrite any other file. Such runs now use `persist=False`: nothing is copied back, and bind mode uses a copy. Custom `Sandbox` implementations must accept the new `persist` keyword.
+- **The WebSocket token no longer travels in the URL** (it ended up in uvicorn and ingress access logs, including API keys that never expire by default). `/v1/ws` takes `{"type": "auth", "token": ...}` as the first message; the console and `scripts/harnis_check.py` do this. `/v1/ws?token=` is refused unless `WS_ALLOW_QUERY_TOKEN=true` (deprecated). **Custom WebSocket clients must change.**
+- An OIDC user named `key-<id>` could become the same principal as the API key `key-<id>` and see its sessions. The `key-` prefix is now reserved; such names are derived like any other unsafe id.
+- OIDC: `platform-admin` is never taken from an IdP role name as-is; map it in `OIDC_ROLE_MAP` to grant it.
+- `ENV` must be `development`, `test` or `production`. A misspelling such as `prod` used to turn every production check off. A default or well-known database password (`harnis_app`, `postgres`, ...) in `DATABASE_URL` is refused in production. **Deployments using another `ENV` value, such as `staging`, must set `production` (or `development`).**
+
+### Fixed
+- **Sessions no longer get stuck in `running`.** An unexpected error in a node now ends the turn as `failed` (`internal_error`, details in the log). A turn cut off by a crash or restart is marked failed by the maintenance job after `STALE_SESSION_SECONDS` (default 1800; migration `008_stale_sessions.sql`), and open tool calls are closed before the next turn.
+- **An empty model reply no longer breaks the session.** It was stored as an empty text block, which Anthropic rejects with an error that never fails over, so every later turn failed. Empty blocks are not stored, and are dropped from histories stored by older versions.
+- **The maintenance CronJob failed on every run**: it loads `ENV=production` without the API's secrets. It now runs as `COMPONENT=job`, which skips the API-only production checks. CI renders the chart to check this.
+- **The chart defaults to one replica** and refuses to render more than one (or `autoscaling.minReplicas` above 1) without ReadWriteMany workspace storage or an `existingClaim`. Before, two replicas with their own `emptyDir` lost the session's files whenever the other Pod handled an approval.
+- The safety filter no longer alters content the model may write back: file contents and user text keep their characters (no Unicode normalisation, no stripped joiners), and only secrets and PII are redacted. `tokenizer: ...` and `author_name = ...` are no longer taken for secrets.
+- Ordinary coding requests are no longer refused: "override the default rules in .eslintrc", "bypass all lint rules" and a YAML `system:` line. Instruction-override text, chat-template tags and `[system]:` lines are still blocked.
+- **`/health` no longer stalls under load.** It is `async`, so it runs on the event loop instead of the worker-thread pool that long turns occupy; before, a busy pool could fail the liveness probe and get the Pod killed mid-turn.
+- **The session lock is renewed while a turn runs.** It was a fixed 900 s lock that a slow turn (model retries across providers) could outlive, letting a second turn start on the same session. It is now 120 s and renewed by a heartbeat, so a crashed Pod releases the session within two minutes instead of fifteen.
+- A resumed approved action was counted twice by the tool budget and the loop breaker, so one later identical call could trigger "loop detected".
+- Docs: the Kubernetes probe address was printed as `1.1.2.1:443` (a version-bump slip); it is `1.1.1.1:443`.
+
 ## [1.1.2] - 2026-11-04
 
 ### Security
