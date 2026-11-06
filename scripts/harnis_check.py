@@ -304,8 +304,11 @@ class Check:
         return r.json()["session_id"]
 
     def turn(self, token: str, sid: str, message: str) -> dict[str, Any]:
-        r = status_is(self.c.call("POST", f"/v1/sessions/{sid}/turns", token, {"message": message},
-                                  timeout=self.a.turn_timeout), 200)
+        r = self.c.call("POST", f"/v1/sessions/{sid}/turns", token, {"message": message},
+                        timeout=self.a.turn_timeout)
+        expect(r.status in (200, 202), f"turn: HTTP {r.status} {r.text[:200]}")
+        if r.status == 202:  # TURN_EXECUTION=queue: a worker is still running the turn
+            return self.wait(token, sid, {"completed", "awaiting_approval", "rejected", "escalated", "failed"})
         return r.json()
 
     def view(self, token: str, sid: str) -> dict[str, Any]:

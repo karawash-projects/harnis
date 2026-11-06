@@ -25,7 +25,12 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      {{- include "harnis.apiSelectorLabels" . | nindent 6 }}
+      {{- include "harnis.selectorLabels" . | nindent 6 }}
+    # The workers need the same egress as the API (database, Redis, Kubernetes API, model providers).
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [api, worker]
   policyTypes:
     - Ingress
     - Egress

@@ -185,6 +185,7 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
     app = FastAPI(title="Harnis", version=__version__, lifespan=lifespan)
     setup_tracing(settings, alert=alerts, app=app)
     app.state.orch, app.state.store, app.state.alerts, app.state.registry = orch, store, alerts, registry
+    app.state.locks, app.state.settings, app.state.bus = locks, settings, bus
     app.state.auth = auth if auth is not None else Authenticator(settings, store)
 
     def view(rec: SessionRecord) -> dict[str, Any]:
@@ -373,8 +374,9 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
                 out[rel] = text
         return out
 
-    @app.post("/v1/sessions/{session_id}/turns")
-    def post_turn(session_id: str, body: TurnIn, p: Principal = Depends(require_role("user"))) -> dict[str, Any]:
+    def _accept_turn(session_id: str, body: TurnIn, p: Principal) -> tuple[SessionRecord, bool]:
+        """Checks, then either runs the turn (inline) or records it for a worker (queue).
+        Returns (record, queued)."""
         if not store.tenant_active(p.tenant_id):
             raise HTTPException(403, "tenant is disabled")
         rec = load_owned(p, session_id)
@@ -389,10 +391,46 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
                 raise HTTPException(409, "another turn is already running for this session")
             rec = load_owned(p, session_id)  # re-read under the lock
             try:
-                rec = orch.start_turn(rec, body.message)
+                if settings.turn_execution != "queue":
+                    return orch.start_turn(rec, body.message), False
+                # Queue: screen the message here (cheap, no I/O) so only the redacted text is
+                # stored, then record the turn and hand it to a worker. A message the guard
+                # rejects is answered inline: nothing is stored and no worker is needed.
+                guard = orch.d.input_guard.check(body.message)
+                if not guard.allowed:
+                    return orch.start_turn(rec, body.message), False
+                rec = orch.prepare_turn(rec, guard.text, guard.redactions)
+                rec.version = store.save_checkpoint(rec)
+                try:
+                    store.enqueue_turn_job(rec.tenant_id, rec.session_id)
+                except Exception:
+                    log.exception("could not queue a turn for %s", rec.session_id)
+                    rec.status, rec.state["reply"] = "failed", "The turn could not be queued. Please try again."
+                    rec.state["turn"].pop("input", None)
+                    store.save_checkpoint(rec)
+                    raise HTTPException(503, "could not queue the turn; try again")
+                metrics.JOBS.labels("queued").inc()
+                return rec, True
             except ConflictError as exc:
                 raise HTTPException(409, str(exc)) from exc
-        return view(rec)
+
+    @app.post("/v1/sessions/{session_id}/turns")
+    async def post_turn(session_id: str, body: TurnIn, response: Response,
+                        p: Principal = Depends(require_role("user"))) -> dict[str, Any]:
+        rec, queued = await asyncio.to_thread(_accept_turn, session_id, body, p)
+        if queued:
+            # Wait a little for the worker so simple clients get the finished turn in one call;
+            # otherwise answer 202 and let them poll or listen on the event stream.
+            deadline = time.monotonic() + settings.turn_wait_seconds
+            while rec.status == "running" and time.monotonic() < deadline:
+                await asyncio.sleep(0.3)
+                fresh = await asyncio.to_thread(store.load_session, p.tenant_id, session_id)
+                if fresh is None:
+                    break
+                rec = fresh
+            if rec.status == "running":
+                response.status_code = status.HTTP_202_ACCEPTED
+        return await asyncio.to_thread(view, rec)
 
     # -- approvals --------------------------------------------------------------
     @app.get("/v1/approvals")
@@ -440,11 +478,14 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
             raise HTTPException(403, "only the requester or a reviewer can deny")
         try:
             row, effective = store.decide_approval(p.tenant_id, approval_id, body.approved, p.user_id,
-                                                   body.action_hash)
+                                                   body.action_hash, enqueue=settings.turn_execution == "queue")
         except ApprovalError as exc:
             raise HTTPException(exc.code, str(exc)) from exc
         metrics.APPROVAL_DECISIONS.labels("approved" if effective else ("denied" if not body.approved else "expired")).inc()
-        background.add_task(_resume, p.tenant_id, row["session_id"], approval_id, effective, p.user_id)
+        if settings.turn_execution == "queue":
+            metrics.JOBS.labels("queued").inc()  # the resume job was queued with the decision, atomically
+        else:
+            background.add_task(_resume, p.tenant_id, row["session_id"], approval_id, effective, p.user_id)
         return {"approval_id": approval_id, "applied": "approved" if effective else "denied",
                 "session_id": row["session_id"]}
 

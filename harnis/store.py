@@ -100,9 +100,11 @@ class PgStore:
             return conn.execute("SELECT * FROM approvals WHERE approval_id = %s", (approval_id,)).fetchone()
 
     def decide_approval(self, tenant_id: str, approval_id: str, approved: bool, decided_by: str,
-                        action_hash: str) -> tuple[dict[str, Any], bool]:
+                        action_hash: str, enqueue: bool = False) -> tuple[dict[str, Any], bool]:
         """Atomically record a decision. Returns (approval, effective_approved).
-        An expired approval is recorded as expired and treated as denied."""
+        An expired approval is recorded as expired and treated as denied.
+        enqueue: in the same transaction, queue the job that resumes the session, so a decision
+        can never be recorded without the resume being durably scheduled."""
         with self._tx(tenant_id) as conn:
             row = conn.execute("SELECT *, now() > expires_at AS expired FROM approvals"
                                " WHERE approval_id = %s FOR UPDATE", (approval_id,)).fetchone()
@@ -123,7 +125,41 @@ class PgStore:
                 " VALUES (%s, %s, %s, %s, %s)",
                 (tenant_id, row["session_id"], decided_by, f"approval_{status}",
                  pg.Jsonb({"approval_id": approval_id, "action_hash": action_hash})))
+            if enqueue:
+                conn.execute("INSERT INTO turn_jobs (tenant_id, session_id, approval_id) VALUES (%s, %s, %s)",
+                             (tenant_id, row["session_id"], approval_id))
         return row, effective
+
+    # -- turn queue (TURN_EXECUTION=queue) -------------------------------------------
+    def enqueue_turn_job(self, tenant_id: str, session_id: str) -> str:
+        with self._tx(tenant_id) as conn:
+            row = conn.execute("INSERT INTO turn_jobs (tenant_id, session_id) VALUES (%s, %s) RETURNING job_id",
+                               (tenant_id, session_id)).fetchone()
+        return str(row["job_id"])
+
+    def claim_turn_job(self, lease_seconds: int) -> dict[str, Any] | None:
+        """Lease the oldest waiting (or lease-expired) job, across tenants. Ids only."""
+        with self._platform() as conn:
+            row = conn.execute("SELECT * FROM harnis_claim_turn_job(%s)", (lease_seconds,)).fetchone()
+        if not row:
+            return None
+        return {"job_id": str(row["out_job_id"]), "tenant_id": row["out_tenant_id"],
+                "session_id": row["out_session_id"],
+                "approval_id": str(row["out_approval_id"]) if row["out_approval_id"] else None,
+                "attempts": row["out_attempts"]}
+
+    def touch_turn_job(self, tenant_id: str, job_id: str) -> None:
+        with self._tx(tenant_id) as conn:
+            conn.execute("UPDATE turn_jobs SET claimed_at = now() WHERE job_id = %s", (job_id,))
+
+    def finish_turn_job(self, tenant_id: str, job_id: str) -> None:
+        with self._tx(tenant_id) as conn:
+            conn.execute("DELETE FROM turn_jobs WHERE job_id = %s", (job_id,))
+
+    def turn_queue_stats(self) -> dict[str, float]:
+        with self._platform() as conn:
+            row = conn.execute("SELECT * FROM harnis_turn_queue_stats()").fetchone()
+        return {"queued": int(row["out_queued"]), "oldest_seconds": float(row["out_oldest_seconds"])}
 
     # -- ledger, metrics, audit ---------------------------------------------------
     def record_usage(self, tenant_id: str, session_id: str, provider: str, model: str,

@@ -569,7 +569,13 @@
       messages.append(h("div", { class: "msg user", text }), h("div", { class: "msg system", id: "thinking", text: "Working..." }));
       messages.scrollTop = messages.scrollHeight;
       try {
-        renderView(await api("POST", `/v1/sessions/${encodeURIComponent(current)}/turns`, { message: text }));
+        let view = await api("POST", `/v1/sessions/${encodeURIComponent(current)}/turns`, { message: text });
+        // With a turn queue the server may answer while a worker is still running the turn.
+        for (let i = 0; view.status === "running" && i < 600; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          view = await api("GET", `/v1/sessions/${encodeURIComponent(current)}`);
+        }
+        renderView(view);
         loadList();
       } catch (e) {
         const t = $("#thinking"); if (t) t.remove();

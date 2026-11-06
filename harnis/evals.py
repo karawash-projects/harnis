@@ -303,12 +303,12 @@ class Runner:
                 continue
             sid = r.json()["session_id"]
             v = self._req("POST", f"/v1/sessions/{sid}/turns", h, json={"message": "Reply with the word ready."})
-            view = v.json() if v.status_code == 200 else {}
+            view = v.json() if v.status_code in (200, 202) else {}
             if view.get("status") == "failed" and "llm_unavailable" in (view.get("flags") or []):
                 self.log(f"skip provider {p}: the API has no working '{p}' provider "
                          f"(add its credentials to the API's .env and include it in LLM_PROVIDERS)")
                 continue
-            if v.status_code != 200:
+            if v.status_code not in (200, 202):
                 self.log(f"skip provider {p}: preflight turn failed ({v.status_code} {v.text[:120]})")
                 continue
             ready.append(p)
@@ -342,6 +342,15 @@ class Runner:
             return policy
         return policy.get(tool, policy.get("*", "approve"))
 
+    def _wait_idle(self, headers, sid: str) -> dict[str, Any]:
+        deadline = time.monotonic() + self.turn_timeout
+        while time.monotonic() < deadline:
+            v = self._req("GET", f"/v1/sessions/{sid}", headers).json()
+            if v["status"] != "running":
+                return v
+            time.sleep(0.25)
+        raise TimeoutError(f"session {sid} still running after {self.turn_timeout}s")
+
     def _wait_resume(self, headers, sid: str, approval_id: str) -> dict[str, Any]:
         deadline = time.monotonic() + self.turn_timeout
         while time.monotonic() < deadline:
@@ -372,9 +381,11 @@ class Runner:
                     sid = r.json()["session_id"]
                 t0 = time.monotonic()
                 r = self._req("POST", f"/v1/sessions/{sid}/turns", uh, json={"message": turn.message})
-                if r.status_code != 200:
+                if r.status_code not in (200, 202):
                     raise RuntimeError(f"turn {i + 1}: {r.status_code} {r.text[:200]}")
                 view = r.json()
+                if r.status_code == 202:  # a turn queue: a worker is still running it
+                    view = self._wait_idle(uh, sid)
                 turn_approvals: list[dict[str, Any]] = []
                 while view["status"] == "awaiting_approval":
                     if len(turn_approvals) >= turn.max_approvals:

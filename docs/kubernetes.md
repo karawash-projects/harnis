@@ -51,10 +51,10 @@ python tasks.py k8s-down
 ## 1. Build and push the images
 
 ```bash
-docker build -t registry.example.com/harnis:1.2.0 .
-docker build -f Dockerfile.sandbox -t registry.example.com/harnis-sandbox:1.2.0 .
-docker push registry.example.com/harnis:1.2.0
-docker push registry.example.com/harnis-sandbox:1.2.0
+docker build -t registry.example.com/harnis:1.3.0 .
+docker build -f Dockerfile.sandbox -t registry.example.com/harnis-sandbox:1.3.0 .
+docker push registry.example.com/harnis:1.3.0
+docker push registry.example.com/harnis-sandbox:1.3.0
 ```
 
 The API image must include the `kubernetes` Python package (the `k8s` extra).
@@ -255,11 +255,11 @@ A minimal production values file (`values-prod.yaml`):
 ```yaml
 image:
   repository: registry.example.com/harnis
-  tag: "1.2.0"
+  tag: "1.3.0"
 sandbox:
   image:
     repository: registry.example.com/harnis-sandbox
-    tag: "1.2.0"
+    tag: "1.3.0"
   runtimeClassName: gvisor
   nodeSelector: {harnis.dev/pool: sandbox}
   tolerations:

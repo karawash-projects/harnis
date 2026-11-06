@@ -28,6 +28,7 @@ TURN_LATENCY = Histogram("harnis_turn_duration_seconds", "Wall-clock time of a t
 TOOL_CALLS = Counter("harnis_tool_calls_total", "Tool calls by tool and outcome", ["tool", "outcome"])
 APPROVALS_REQUESTED = Counter("harnis_approvals_requested_total", "Actions suspended for approval", ["tool"])
 APPROVAL_DECISIONS = Counter("harnis_approval_decisions_total", "Approval decisions", ["decision"])
+JOBS = Counter("harnis_turn_jobs_total", "Turn queue jobs by result (queued, done, skipped, failed, retried)", ["result"])
 LLM_CALLS = Counter("harnis_llm_calls_total", "Model calls by provider, model and outcome",
                     ["provider", "model", "outcome"])
 LLM_LATENCY = Histogram("harnis_llm_call_duration_seconds", "Model call duration", ["provider"],

@@ -69,8 +69,8 @@ def test_rls_is_forced_on_every_tenant_table(pg):
         rows = c.execute("SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class"
                          " WHERE relname = ANY(%s)",
                          (["sessions", "approvals", "prompt_registry", "audit_log", "run_metrics",
-                           "token_ledger", "tenants", "api_keys"],)).fetchall()
-    assert len(rows) == 8 and all(r[1] and r[2] for r in rows)
+                           "token_ledger", "tenants", "api_keys", "turn_jobs"],)).fetchall()
+    assert len(rows) == 9 and all(r[1] and r[2] for r in rows)
 
 
 def test_app_cannot_read_matview_or_partitions_directly(pg):
@@ -163,6 +163,6 @@ def test_definer_functions_pin_search_path_with_pg_temp_last(pg):
     with pgdrv.connect(pg["owner"]) as c:
         rows = c.execute("SELECT p.proname, p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
                          " WHERE p.prosecdef AND n.nspname = 'public'").fetchall()
-    assert len(rows) == 9
+    assert len(rows) == 11
     for name, config in rows:
         assert "search_path=public, pg_temp" in (config or []), name

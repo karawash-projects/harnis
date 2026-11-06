@@ -414,6 +414,37 @@ sandbox:
     olderThanSeconds: 900
 
 # -----------------------------------------------------------------------------
+# Turn workers (optional)
+# -----------------------------------------------------------------------------
+# By default the API runs each turn inside the HTTP request. With
+# worker.enabled the API records the turn and these Pods run it, so a long turn
+# no longer holds an API thread, an ingress connection or a liveness probe.
+# The API waits up to config.TURN_WAIT_SECONDS (default 25) for the result and
+# otherwise answers 202 (clients poll GET /v1/sessions/{id} or use the event
+# stream). A worker that dies lets its lease run out (config.WORKER_LEASE_SECONDS)
+# and another worker continues the session from its last checkpoint.
+#
+# Workers and the API share the session files, so workspaces.persistence must be
+# enabled (ReadWriteMany if they can run on different nodes). Workers use the
+# API's service account and settings, because they start the sandbox Pods.
+worker:
+  enabled: false
+  replicaCount: 2
+  # Turns running at once in each Pod (config.WORKER_CONCURRENCY).
+  concurrency: 4
+  terminationGracePeriodSeconds: 120
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 1Gi}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  priorityClassName: ""
+  extraEnv: []
+
+# -----------------------------------------------------------------------------
 # Service, Ingress, autoscaling, disruption budget
 # -----------------------------------------------------------------------------
 service:

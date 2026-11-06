@@ -184,6 +184,11 @@ class Orchestrator:
 
     # -- public API ----------------------------------------------------------
     def start_turn(self, rec: SessionRecord, user_text: str) -> SessionRecord:
+        return self.run_prepared(self.prepare_turn(rec, user_text))
+
+    def prepare_turn(self, rec: SessionRecord, user_text: str, redactions: list[str] | None = None) -> SessionRecord:
+        """Mark the session as running a new turn without running it (queue mode: a worker
+        runs it with `run_prepared`). The caller checkpoints the record."""
         if rec.status in ("awaiting_approval", "running"):
             raise ConflictError(f"session is {rec.status}")
         st = rec.state
@@ -191,13 +196,18 @@ class Orchestrator:
         # without results; the provider rejects such a history, so close them first.
         self._close_pending(st, "the previous turn was interrupted")
         st["awaiting"], st["approval_decision"] = None, None
-        st["turn"] = {"input": user_text, "steps": 0, "cost_usd": 0.0, "handoffs": 0, "tool_calls": 0,
+        st["turn"] = {"input": user_text, "pre_redactions": list(redactions or []), "steps": 0, "cost_usd": 0.0, "handoffs": 0, "tool_calls": 0,
                       "used_tools": False, "loop_trips": 0, "cache_hit": False,
                       "started_at": time.time()}
         st["reply"] = None
         st["loop_fingerprints"] = []
         rec.status = "running"
         rec.current_node = "ingest"
+        return rec
+
+    def run_prepared(self, rec: SessionRecord) -> SessionRecord:
+        """Run (or, after a worker died, continue from the last checkpoint) a turn
+        that `prepare_turn` or `resume_after_decision` has marked running."""
         return self._run(rec)
 
     def resume_after_decision(self, rec: SessionRecord, approval_id: str, approved: bool,
@@ -289,6 +299,8 @@ class Orchestrator:
         st = rec.state
         result = self.d.input_guard.check(st["turn"]["input"])
         st["turn"].pop("input", None)  # never persist the raw (unredacted) input
+        # In queue mode the API already redacted the message; its findings are carried here.
+        result.redactions = list(result.redactions) + list(st["turn"].pop("pre_redactions", []) or [])
         if not result.allowed:
             metrics.GUARD_BLOCKS.labels("input_blocked").inc()
             self.d.store.audit(rec.tenant_id, rec.session_id, rec.user_id, "input_blocked",

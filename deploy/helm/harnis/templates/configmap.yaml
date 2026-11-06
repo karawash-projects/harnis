@@ -8,12 +8,14 @@ metadata:
     {{- include "harnis.componentLabels" (list . "api") | nindent 4 }}
 data:
   {{- /* User settings first; chart-managed keys below win on conflicts. */}}
-  {{- range $key, $value := omit .Values.config "ENV" "WORKSPACES_DIR" "DB_DRIVER" }}
+  {{- range $key, $value := omit .Values.config "ENV" "WORKSPACES_DIR" "DB_DRIVER" "TURN_EXECUTION" "WORKER_CONCURRENCY" }}
   {{- if not (hasPrefix "SANDBOX_" $key) }}
   {{ $key }}: {{ toString $value | quote }}
   {{- end }}
   {{- end }}
   ENV: "production"
+  TURN_EXECUTION: {{ ternary "queue" "inline" .Values.worker.enabled | quote }}
+  WORKER_CONCURRENCY: {{ .Values.worker.concurrency | quote }}
   DB_DRIVER: {{ .Values.externalDatabase.driver | default "pgtern" | quote }}
   METRICS_ENABLED: {{ .Values.metrics.enabled | quote }}
   WORKSPACES_DIR: {{ .Values.workspaces.mountPath | quote }}

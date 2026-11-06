@@ -234,7 +234,7 @@ All endpoints except `/health`, `/ready` and `/` need `Authorization: Bearer <OI
 | Method & path | Role | Purpose |
 |---|---|---|
 | `POST /v1/sessions` | user | create a session, optional `{"files": {path: content}}` seed |
-| `POST /v1/sessions/{id}/turns` | user (owner) | send a message; returns `completed`, `awaiting_approval`, `rejected`, `escalated` or `failed` |
+| `POST /v1/sessions/{id}/turns` | user (owner) | send a message; returns `completed`, `awaiting_approval`, `rejected`, `escalated` or `failed` (with `TURN_EXECUTION=queue`, `202` and `running` if a worker has not finished within `TURN_WAIT_SECONDS`) |
 | `GET /v1/sessions[/{id}]` | owner / reviewer | list or view sessions |
 | `GET /v1/sessions/{id}/files` | owner / reviewer | the session workspace |
 | `GET /v1/approvals` | reviewer | pending approvals with diff / command and `action_hash` |
