@@ -52,12 +52,6 @@ worker:
     limits:
       memory: 1Gi
 
-workspaces:
-  persistence:
-    enabled: true
-    accessModes: ["ReadWriteOnce"]
-    size: 1Gi
-
 config:
   LLM_PROVIDERS: "mock"
   CACHE_ENABLED: "true"
@@ -86,8 +80,12 @@ externalRedis:
 
 workspaces:
   emptyDirSizeLimit: 2Gi
+  # The API and the worker share the session files. local-path is ReadWriteOnce,
+  # which works because the single kind node runs both Pods.
   persistence:
-    enabled: false
+    enabled: true
+    accessModes: ["ReadWriteOnce"]
+    size: 1Gi
 
 sandbox:
   # The chart sets SANDBOX_BACKEND=kubernetes: one Pod per command in the
