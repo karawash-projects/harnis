@@ -174,6 +174,20 @@ jobs:
           assert spec["containers"][0]["command"] == ["python", "-m", "harnis.worker"]
           assert any(v.get("persistentVolumeClaim") for v in spec["volumes"]), "workers must mount the shared workspaces"
           PY
+          # Kubernetes rejects duplicate env names: api.extraEnv and worker.extraEnv may both set one.
+          helm template h deploy/helm/harnis -n harnis --set worker.enabled=true \
+            --set workspaces.persistence.enabled=true \
+            --set 'api.extraEnv[0].name=ENV' --set 'api.extraEnv[0].value=development' \
+            --set 'worker.extraEnv[0].name=ENV' --set 'worker.extraEnv[0].value=test' > dup.yaml
+          python3 - <<'PY'
+          import yaml
+          docs = [d for d in yaml.safe_load_all(open("dup.yaml")) if d]
+          dep = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"].endswith("worker"))
+          env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
+          names = [e["name"] for e in env]
+          assert len(names) == len(set(names)), names
+          assert {e["name"]: e.get("value") for e in env}["ENV"] == "test"
+          PY
       - name: database CA bundle and driver settings render where they are used
         run: |
           set -euo pipefail

@@ -1,6 +1,11 @@
 {{- if .Values.worker.enabled }}
 {{- $api := .Values.api -}}
 {{- $w := .Values.worker -}}
+{{- /* The API's extraEnv applies to workers too (pricing, providers, ...). worker.extraEnv wins by
+       name, because Kubernetes rejects a Pod with two entries for the same variable. */ -}}
+{{- $extra := dict -}}
+{{- range $api.extraEnv }}{{ $_ := set $extra .name . }}{{ end -}}
+{{- range $w.extraEnv }}{{ $_ := set $extra .name . }}{{ end -}}
 # Runs queued turns (see `worker` in values.yaml). Same image, settings, secrets
 # and service account as the API; no Service, no ingress, no HTTP port.
 apiVersion: apps/v1
@@ -69,11 +74,8 @@ spec:
           env:
             - name: HOME
               value: /tmp
-            {{- with $api.extraEnv }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
-            {{- with $w.extraEnv }}
-            {{- toYaml . | nindent 12 }}
+            {{- range $name, $entry := $extra }}
+            - {{ toYaml $entry | nindent 14 | trim }}
             {{- end }}
           securityContext:
             {{- toYaml $api.securityContext | nindent 12 }}
