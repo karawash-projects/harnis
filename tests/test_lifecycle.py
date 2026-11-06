@@ -140,9 +140,32 @@ def test_retention_and_orphan_sweep(client, tenant, ws, pg, app_pool):
     old = time.time() - 7200
     os.utime(orphan, (old, old))
     report = run(dsn=pg["owner"], workspaces=str(ws), session_days=30, audit_days=0)
-    assert report == {"retention_deleted_sessions": 1, "orphan_workspaces_removed": 1}
+    assert report == {"retention_deleted_sessions": 1, "orphan_workspaces_removed": 1, "stale_sessions_failed": 0}
     admin = h("boss", tenant, ("admin",))
     assert client.get(f"/v1/sessions/{done_sid}", headers=admin).status_code == 404
     assert client.get(f"/v1/sessions/{old_sid}", headers=admin).status_code == 200  # waiting for a reviewer: kept
     assert client.get(f"/v1/sessions/{new_sid}", headers=admin).status_code == 200
     assert not (ws / tenant / done_sid).exists() and not orphan.exists() and (ws / tenant / new_sid).exists()
+
+
+def test_reaper_fails_sessions_stuck_in_running(pg, client, tenant):
+    """A turn cut off by a crash leaves the session 'running'; the maintenance
+    job marks it failed (and bumps the version) so it accepts new turns."""
+    sid = client.post("/v1/sessions", json={}, headers=h("carol", tenant)).json()["session_id"]
+    fresh = client.post("/v1/sessions", json={}, headers=h("carol", tenant)).json()["session_id"]
+    with pgdrv.connect(pg["owner"], autocommit=True) as c:
+        c.execute("UPDATE sessions SET status = 'running', updated_at = now() - interval '2 hours'"
+                  " WHERE session_id = %s", (sid,))
+        c.execute("UPDATE sessions SET status = 'running' WHERE session_id = %s", (fresh,))
+        reaped = c.execute("SELECT * FROM harnis_reap_stale_sessions(1800)").fetchall()
+        assert [r[1] for r in reaped] == [sid]  # only the stale one
+        assert c.execute("SELECT * FROM harnis_reap_stale_sessions(0)").fetchall() == []  # 0 = disabled
+        st = c.execute("SELECT status, version FROM sessions WHERE session_id = %s", (sid,)).fetchone()
+        assert st[0] == "failed" and st[1] >= 1
+        assert c.execute("SELECT status FROM sessions WHERE session_id = %s", (fresh,)).fetchone()[0] == "running"
+        assert c.execute("SELECT count(*) FROM audit_log WHERE session_id = %s AND event_type = 'stale_session_reaped'",
+                         (sid,)).fetchone()[0] == 1
+    # and the user can talk to it again
+    r = client.post(f"/v1/sessions/{sid}/turns", json={"message": "What are your opening hours?"},
+                    headers=h("carol", tenant))
+    assert r.status_code == 200 and r.json()["status"] == "completed"

@@ -12,6 +12,8 @@ CronJob:
   data forever) and removes the deleted sessions' workspaces;
 * removes workspaces whose session no longer exists (user erasure or tenant
   deletion on another replica, or a crash between the two steps);
+* marks sessions stuck in 'running' (a turn cut off by a crash or restart)
+  as failed after STALE_SESSION_SECONDS (default 1800), so they accept new turns;
 * refreshes the analytics materialized view as `harnis_analytics`.
 
 Approval expiry needs no job: an expired approval is treated as denied at
@@ -63,9 +65,11 @@ def run(dsn: str | None = None, workspaces: str | None = None, session_days: int
     ws = Path(workspaces or s.workspaces_dir)
     session_days = s.retention_session_days if session_days is None else session_days
     audit_days = s.retention_audit_days if audit_days is None else audit_days
-    report = {"retention_deleted_sessions": 0, "orphan_workspaces_removed": 0}
+    report = {"retention_deleted_sessions": 0, "orphan_workspaces_removed": 0, "stale_sessions_failed": 0}
     with pg.connect(dsn, autocommit=True) as conn:
         conn.execute("SELECT ensure_ledger_partitions(3)")
+        report["stale_sessions_failed"] = len(conn.execute(
+            "SELECT * FROM harnis_reap_stale_sessions(%s)", (s.stale_session_seconds,)).fetchall())
         if session_days or audit_days:
             rows = conn.execute("SELECT * FROM harnis_apply_retention(%s, %s)",
                                 (session_days, audit_days)).fetchall()

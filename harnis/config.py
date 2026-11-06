@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     # Data retention (days; 0 keeps data forever), applied by `python -m harnis.maintenance`.
     # Sessions (with their messages, approvals and workspace files) idle longer than this are deleted.
     retention_session_days: int = Field(0, ge=0)
+    # Sessions stuck in 'running' longer than this (a turn cut off by a crash or restart) are
+    # marked failed by the maintenance job. 0 disables the reaper.
+    stale_session_seconds: int = Field(1800, ge=0)
     retention_audit_days: int = Field(0, ge=0)
     # Operator-confirmed model prices, USD per million tokens: {"model": [input, output]}.
     # `python tasks.py pricing` fills this in. Production refuses unpriced models.

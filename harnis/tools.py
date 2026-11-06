@@ -272,7 +272,9 @@ def _write(ctx: ToolContext, a: WriteFile) -> tuple[str, bool]:  # type: ignore[
 
 
 def _run_tests(ctx: ToolContext, _: BaseModel) -> tuple[str, bool]:
-    r = ctx.sandbox.run("python -m pytest -q -p no:cacheprovider 2>&1", ctx.workspace)
+    # Runs workspace code without a human approval, so nothing it changes is
+    # copied back: an approved file can't be used to rewrite other files.
+    r = ctx.sandbox.run("python -m pytest -q -p no:cacheprovider 2>&1", ctx.workspace, persist=False)
     if r.error:
         return r.error, True
     return f"exit_code={r.exit_code}\n{r.output}", r.exit_code != 0

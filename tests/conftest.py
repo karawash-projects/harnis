@@ -77,7 +77,7 @@ class FakeSandbox:
         self.calls: list[str] = []
         self.exit_code, self.output = exit_code, output
 
-    def run(self, command, workspace, timeout=None, *, egress=False):
+    def run(self, command, workspace, timeout=None, *, egress=False, persist=True):
         self.calls.append(command)
         self.egress = getattr(self, "egress", []) + [egress]
         return SandboxResult(self.exit_code, self.output)

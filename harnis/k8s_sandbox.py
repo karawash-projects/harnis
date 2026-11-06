@@ -597,7 +597,7 @@ class KubernetesSandbox:
             return "?"
 
     def run(self, command: str, workspace: Path, timeout: int | None = None, *,
-            egress: bool = False) -> SandboxResult:
+            egress: bool = False, persist: bool = True) -> SandboxResult:
         if egress and not self.egress_proxy_url:
             return SandboxResult(-1, "", error="dependency installs are not configured for the Kubernetes "
                                                "sandbox (SANDBOX_EGRESS_PROXY_URL; the Helm chart sets it)")
@@ -661,8 +661,9 @@ class KubernetesSandbox:
                     output += f"\n[killed after {timeout}s timeout]"
                 # Like Docker copy mode, changes are applied even after a
                 # timeout; they are validated either way.
-                unpack_workspace(self._download(name), workspace, self.max_bytes, self.max_files,
-                                 self.deps_max_bytes, self.deps_max_files, only_deps=egress)
+                if persist or egress:  # persist=False: changes are discarded with the Pod
+                    unpack_workspace(self._download(name), workspace, self.max_bytes, self.max_files,
+                                     self.deps_max_bytes, self.deps_max_files, only_deps=egress)
                 result = SandboxResult(exit_code, output, timed_out, int((self._clock() - start) * 1000))
             except Exception as exc:
                 span.record_exception(exc)
