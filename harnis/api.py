@@ -11,6 +11,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -563,6 +564,16 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
     def analytics(p: Principal = Depends(require_role("reviewer"))) -> list[dict[str, Any]]:
         return store.analytics_hourly(p.tenant_id)
 
+    @app.get("/v1/admin/spend")
+    def spend(days: int = Query(30, ge=1, le=366), p: Principal = Depends(require_role("admin"))) -> dict[str, Any]:
+        """Spend by user and by agent for the last `days` days. Admin only: it shows what each person ran up."""
+        return store.spend_breakdown(p.tenant_id, days)
+
+    @app.get("/v1/approval-stats")
+    def approval_stats(days: int = Query(30, ge=1, le=366), p: Principal = Depends(require_role("reviewer"))) -> dict[str, Any]:
+        """Approval and denial rates and how long decisions took, in aggregate."""
+        return store.approval_stats(p.tenant_id, days)
+
     @app.get("/v1/scorecard")
     def scorecard(hours: int = Query(24, ge=1, le=168), p: Principal = Depends(require_role("reviewer"))) -> dict[str, Any]:
         """Harness health for the tenant: outcomes, safety events, spend against its caps, trip wires."""
@@ -615,11 +626,14 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
 
     @app.get("/v1/admin/audit")
     def audit(after: int = Query(0, ge=0), limit: int = Query(500, ge=1, le=5000),
-              event_type: str | None = None, format: str = Query("json", pattern="^(json|ndjson)$"),
+              event_type: str | None = None, actor: str | None = Query(None, max_length=200),
+              since: datetime | None = None, until: datetime | None = None,
+              format: str = Query("json", pattern="^(json|ndjson)$"),
               p: Principal = Depends(require_role("admin"))):
         """Append-only audit log for your tenant, oldest first. Page with
-        `after=<last event_id>`; `format=ndjson` for SIEM ingestion."""
-        rows = store.audit_events(p.tenant_id, after, limit, event_type)
+        `after=<last event_id>`; `format=ndjson` for SIEM ingestion. Filter by `event_type`,
+        `actor`, and a time range (`since` inclusive, `until` exclusive, ISO 8601)."""
+        rows = store.audit_events(p.tenant_id, after, limit, event_type, actor, since, until)
         if format == "ndjson":
             body = "".join(json.dumps(r, default=str) + "\n" for r in rows)
             return Response(body, media_type="application/x-ndjson")
