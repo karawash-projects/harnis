@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-22
+
+### Added
+- **Approvals queue**: filter by agent and tool, sort by oldest, newest or expiring soonest, an "expires in" countdown (red under 10 minutes), the agent that asked, and what the agent said just before asking. When a new approval arrives while the tab is in the background, the tab title flashes "(n) Approval needed" and, if the reviewer chose "Alert me on this device", a desktop notification appears.
+- `GET /v1/approvals` entries gain `agent`, `context` (the agent's last message before the request, up to 400 characters), `decided_by` and `decided_at`, and the list is capped at 500.
+
 ## [1.6.0] - 2026-11-22
 
 ### Added

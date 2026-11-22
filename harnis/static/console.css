@@ -193,6 +193,10 @@ td .detail { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-
 .composer textarea { min-height: 42px; max-height: 200px; }
 .approval { border: 1px solid var(--warn); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
 .approval .head { padding: 10px 14px; background: var(--warn-soft); color: var(--warn); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.approval .why { padding: 8px 14px; border-bottom: 1px solid var(--line); color: var(--muted); }
+.approval .why strong { color: var(--ink); font-weight: 600; }
+.expires.soon { color: var(--danger); font-weight: 600; }
+.filters { gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .approval .body { padding: 12px 14px; }
 .approval .actions { padding: 0 14px 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .code { background: var(--code); border-radius: 8px; padding: 10px 12px; max-height: 360px; overflow: auto; }
