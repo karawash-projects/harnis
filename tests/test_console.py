@@ -530,3 +530,60 @@ def test_manager_reports_and_audit_filters(page, tmp_path, app_pool, redis_clien
         page.fill("#auditFrom", "2999-01-01")
         page.click("form button[type=submit]")
         expect(page.locator("tbody")).to_contain_text("No events")
+
+
+UNNAMED = """() => [...document.querySelectorAll('button, a[href], input, select, textarea')]
+  .filter(e => !e.closest('.hidden') && e.type !== 'hidden' && e.getClientRects().length)
+  .filter(e => !(e.getAttribute('aria-label') || e.getAttribute('aria-labelledby') || e.title
+                 || (e.labels && e.labels.length) || e.textContent.trim() || e.placeholder))
+  .map(e => e.outerHTML.slice(0, 80))"""
+
+
+def test_menu_collapses_keyboard_works_and_controls_have_names(page, tmp_path, app_pool, redis_client):
+    expect = sync_api.expect
+    with serve(harnis_app(tmp_path, app_pool, redis_client)) as url:
+        page.goto(url + "/")
+        page.click("#devToken")
+        expect(page.locator("#menuToggle")).to_have_attribute("aria-expanded", "true")
+        expect(page.locator(".nav a.active")).to_have_attribute("aria-current", "page")
+        # Collapse and expand the sidebar on a wide screen; the choice is remembered.
+        page.click("#menuToggle")
+        expect(page.locator("#mainNav")).to_be_hidden()
+        page.reload()
+        expect(page.locator("#mainNav")).to_be_hidden()
+        page.click("#menuToggle")
+        expect(page.locator("#mainNav")).to_be_visible()
+        # Keyboard: the first Tab stop (just before the menu button) is "Skip to content", and it moves focus into the page.
+        page.reload()
+        expect(page.locator("#menuToggle")).to_be_visible()
+        page.locator("#menuToggle").focus()
+        page.keyboard.press("Shift+Tab")
+        expect(page.locator(".skip")).to_be_focused()
+        page.keyboard.press("Enter")
+        expect(page.locator("#content")).to_be_focused()
+        # Every visible control in every view has a name a screen reader can announce.
+        for view in ("chat", "approvals", "activity", "audit", "agents", "keys"):
+            page.goto(f"{url}/#/{view}")
+            page.wait_for_load_state("networkidle")
+            assert page.evaluate(UNNAMED) == [], view
+
+
+def test_narrow_screen_has_no_sideways_scroll_and_menu_closes_after_use(page, tmp_path, app_pool, redis_client):
+    expect = sync_api.expect
+    page.set_viewport_size({"width": 375, "height": 740})
+    with serve(harnis_app(tmp_path, app_pool, redis_client)) as url:
+        page.goto(url + "/")
+        page.click("#devToken")
+        expect(page.locator("#mainNav")).to_be_hidden()              # closed by default on a phone
+        for view in ("chat", "approvals", "activity", "audit", "agents"):
+            page.goto(f"{url}/#/{view}")
+            page.wait_for_load_state("networkidle")
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), view
+        page.click("#menuToggle")
+        expect(page.locator("#mainNav")).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(page.locator("#mainNav")).to_be_hidden()
+        page.click("#menuToggle")
+        page.click('.nav a[href="#/approvals"]')
+        expect(page.locator("#mainNav")).to_be_hidden()
+        expect(page.locator("#content")).to_be_focused()

@@ -391,7 +391,7 @@
 
   function renderShell() {
     const me = state.me;
-    const nav = h("nav", { class: "nav", "aria-label": "Main" });
+    const nav = h("nav", { class: "nav", id: "mainNav", "aria-label": "Main" });
     let section = null;
     for (const v of VIEWS.filter((x) => x.allowed())) {
       if (v.section !== section) { section = v.section; nav.append(h("div", { class: "section", text: section })); }
@@ -399,8 +399,18 @@
         v.badge ? h("span", { class: "badge hidden", id: "pendingBadge" }) : null));
     }
     const roles = me.roles.length ? me.roles : ["no roles"];
-    $("#app").replaceChildren(h("div", { class: "shell" },
+    const narrow = () => window.matchMedia("(max-width: 860px)").matches;
+    const menuBtn = h("button", { class: "btn ghost sm menu-btn", id: "menuToggle", type: "button", "aria-controls": "mainNav",
+      "aria-expanded": "true", "aria-label": "Menu", onclick: () => setMenu(shell.classList.contains("nav-closed")) }, "\u2630");
+    function setMenu(open, remember = true) {
+      shell.classList.toggle("nav-closed", !open);
+      menuBtn.setAttribute("aria-expanded", String(open));
+      if (remember && !narrow()) { try { localStorage.setItem("harnis.nav", open ? "open" : "closed"); } catch (e) { /* optional */ } }
+    }
+    const shell = h("div", { class: "shell" },
+      h("a", { class: "skip", href: "#content", onclick: (ev) => { ev.preventDefault(); $("#content").focus(); } }, "Skip to content"),
       h("header", { class: "topbar" },
+        menuBtn,
         brandBlock(),
         h("span", { class: "pill", title: "Tenant", text: me.tenant_id }),
         h("span", { class: "spacer" }),
@@ -411,7 +421,13 @@
           ...roles.map((r) => h("span", { class: "pill accent", text: r }))),
         h("button", { class: "btn ghost sm", id: "signOut", onclick: () => signOut() }, "Sign out")),
       nav,
-      h("main", { class: "content", id: "content" })));
+      h("main", { class: "content", id: "content", tabindex: "-1" }));
+    $("#app").replaceChildren(shell);
+    let saved = null; try { saved = localStorage.getItem("harnis.nav"); } catch (e) { /* optional */ }
+    setMenu(narrow() ? false : saved !== "closed", false);
+    // On a narrow screen the menu closes after you pick something, so the page is visible.
+    nav.addEventListener("click", (ev) => { if (ev.target.closest("a") && narrow()) setMenu(false, false); });
+    shell.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && narrow() && !shell.classList.contains("nav-closed")) { setMenu(false, false); menuBtn.focus(); } });
     setLive(state.live);
     refreshPendingCount();
     route();
@@ -423,8 +439,15 @@
     const { view, arg } = currentRoute();
     if (viewCleanup) { viewCleanup(); viewCleanup = null; }
     listeners.clear();
-    for (const a of document.querySelectorAll(".nav a")) a.classList.toggle("active", view && a.dataset.view === view.id);
+    for (const a of document.querySelectorAll(".nav a")) {
+      const on = !!(view && a.dataset.view === view.id);
+      a.classList.toggle("active", on);
+      if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+    }
     const content = $("#content");
+    // After navigating, move keyboard and screen-reader focus to the page, not the link that was clicked.
+    if (state.routed) content.focus({ preventScroll: true });
+    state.routed = true;
     if (!view) {
       content.replaceChildren(h("div", { class: "empty" },
         h("h2", { text: "No access yet" }),

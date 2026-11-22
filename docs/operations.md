@@ -133,6 +133,10 @@ Reviewers can filter the queue by agent and tool, sort by age or by time left, a
 
 Usage & analytics shows, for 7, 30 or 90 days: spend by user and by agent (admins; `GET /v1/admin/spend`) and approval statistics (reviewers; `GET /v1/approval-stats`): counts, approval rate, median and 90th-percentile time from request to decision, and a per-tool breakdown. The token ledger records no user or agent, so spend is attributed through the conversation (its owner and the agent it ended on); calls from conversations deleted by retention or erasure appear as "(erased or expired)". Harnis has no teams, so there is no per-team view. The audit log can be filtered by user and date range (`actor`, `since`, `until`), including in the NDJSON export.
 
+## Console accessibility
+
+The console has a skip link, visible keyboard focus, a collapsible menu and a phone layout, and its tests check that controls have names and that main views fit a 375 px screen. This is not a formal accessibility audit or a WCAG conformance claim; run your own assessment (screen readers, contrast with your brand colours) before relying on it for compliance.
+
 ## Console branding
 
 Each deployment can show its own name, logo, colour and a help link; every tenant of the deployment sees the same branding. Settings: `CONSOLE_BRAND_NAME`, `CONSOLE_LOGO_PATH` (a PNG, JPEG, WebP or SVG file of at most 256 KB, read at startup so a bad path fails the deploy), `CONSOLE_ACCENT` and optionally `CONSOLE_ACCENT_DARK` (`#rrggbb`; pick a colour with enough contrast on white and, for the dark variant, on near-black), and `CONSOLE_HELP_URL` (`https://`, `http://` or `mailto:`). The logo is served by the API itself, so the console's strict Content-Security-Policy is unchanged. On Kubernetes, mount the logo file into the Pod and set the variables in `config`.
