@@ -713,7 +713,7 @@ class Check:
 
     # -- 6. guardrails and budgets -----------------------------------------------------------
     def guardrails(self) -> None:
-        r = self.r
+        r, c = self.r, self.c
         r.section("Guardrails and budgets")
 
         def injection():
