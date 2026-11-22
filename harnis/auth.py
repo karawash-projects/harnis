@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import logging
 import hmac
 import json
 import re
@@ -82,6 +83,9 @@ def safe_id(value: str) -> str:
     return f"{slug}-{hashlib.sha256(value.encode()).hexdigest()[:10]}"
 
 
+log = logging.getLogger("harnis.auth")
+
+
 def _unauthorized(detail: str) -> HTTPException:
     return HTTPException(status.HTTP_401_UNAUTHORIZED, detail, headers={"WWW-Authenticate": "Bearer"})
 
@@ -108,7 +112,8 @@ def _decode_local(token: str, s: Settings) -> Principal:
                             audience=s.jwt_audience, issuer=s.jwt_issuer,
                             options={"require": ["exp", "sub", "tenant_id", "iss", "aud"]})
     except jwt.PyJWTError as exc:
-        raise _unauthorized(f"invalid token: {exc}") from exc
+        log.debug("token rejected: %s", exc)  # details stay in the log, not in the 401
+        raise _unauthorized("invalid token") from exc
     if not (_ID.match(str(claims["sub"])) and _ID.match(str(claims["tenant_id"]))):
         raise _unauthorized("invalid token: malformed subject or tenant")
     roles = frozenset(r for r in claims.get("roles", []) if r in ROLES)
@@ -190,7 +195,8 @@ class OIDCVerifier:
         try:
             kid = jwt.get_unverified_header(token).get("kid")
         except jwt.PyJWTError as exc:
-            raise _unauthorized(f"invalid token: {exc}") from exc
+            log.debug("token rejected: %s", exc)  # details stay in the log, not in the 401
+            raise _unauthorized("invalid token") from exc
         keys = self._jwks()
         if kid not in keys:
             # Rate-limit forced refreshes so garbage kids can't hammer the IdP.
@@ -218,7 +224,8 @@ class OIDCVerifier:
                                 issuer=s.oidc_issuer, leeway=s.oidc_leeway_seconds,
                                 options={"require": ["exp", "iss", "aud", "sub"]})
         except jwt.PyJWTError as exc:
-            raise _unauthorized(f"invalid token: {exc}") from exc
+            log.debug("token rejected: %s", exc)  # details stay in the log, not in the 401
+            raise _unauthorized("invalid token") from exc
         user = _claim(claims, s.oidc_user_claim)
         if not user:
             raise _unauthorized(f"invalid token: missing user claim {s.oidc_user_claim!r}")
@@ -291,7 +298,14 @@ def current_principal(request: Request,
     if creds is None:
         raise _unauthorized("missing bearer token")
     auth: Authenticator | None = getattr(request.app.state, "auth", None)
-    return auth.authenticate(creds.credentials) if auth else decode_token(creds.credentials)
+    p = auth.authenticate(creds.credentials) if auth else decode_token(creds.credentials)
+    # A disabled tenant is refused for every kind of credential (API keys are checked at
+    # lookup); platform admins hold no tenant role and have no tenant row.
+    store = getattr(request.app.state, "store", None)
+    active = getattr(store, "tenant_active", None)
+    if active is not None and p.roles & TENANT_ROLES and not active(p.tenant_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant is disabled")
+    return p
 
 
 def require_role(role: str):

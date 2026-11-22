@@ -174,6 +174,24 @@ def pack_workspace(workspace: Path, max_bytes: int, max_files: int = 1_000_000,
     return buf.getvalue()
 
 
+def _wanted(m: tarfile.TarInfo, root: Path, only_deps: bool) -> tuple[list[str], str, Path] | None:
+    """(path parts, relative path, host target) for an archive entry that may be applied, else None."""
+    parts = PurePosixPath(m.name).parts
+    if not parts or parts[0] != "workspace" or ".." in parts or m.name.startswith("/"):
+        return None
+    rel_parts = list(parts[1:])
+    rel = "/".join(rel_parts)
+    if only_deps and not in_deps(rel):
+        return None
+    if not rel_parts or any(_skip_dir("/".join(rel_parts[:i]), d) for i, d in enumerate(rel_parts[:-1])) \
+            or (rel_parts[0] in SKIP_DIRS):
+        return None
+    target = root.joinpath(*rel_parts)
+    if root not in target.resolve().parents:
+        return None
+    return rel_parts, rel, target
+
+
 def unpack_workspace(stream: bytes | BinaryIO, workspace: Path, max_bytes: int, max_files: int,
                      deps_max_bytes: int = 0, deps_max_files: int = 0, only_deps: bool = False) -> None:
     """Apply the container's workspace directory back onto the host workspace.
@@ -190,21 +208,25 @@ def unpack_workspace(stream: bytes | BinaryIO, workspace: Path, max_bytes: int, 
     seen: set[str] = set()
     budget = _Budget(max_bytes, max_files, deps_max_bytes, deps_max_files)
     fileobj = io.BytesIO(stream) if isinstance(stream, (bytes, bytearray)) else stream
+    if fileobj.seekable():
+        # Check the limits over the whole archive first, so a run that is too large changes
+        # nothing instead of leaving the workspace half written.
+        pre = _Budget(max_bytes, max_files, deps_max_bytes, deps_max_files)
+        with tarfile.open(fileobj=fileobj, mode="r:") as tar:
+            for m in tar:
+                w = _wanted(m, root, only_deps)
+                if w and m.isreg():
+                    try:
+                        pre.add(w[1], m.size)
+                    except WorkspaceTooLarge as exc:
+                        raise WorkspaceTooLarge(f"sandbox output too large: {exc}") from exc
+        fileobj.seek(0)
     with tarfile.open(fileobj=fileobj, mode="r:") as tar:
         for m in tar:
-            parts = PurePosixPath(m.name).parts
-            if not parts or parts[0] != "workspace" or ".." in parts or m.name.startswith("/"):
+            w = _wanted(m, root, only_deps)
+            if w is None:
                 continue
-            rel_parts = parts[1:]
-            rel = "/".join(rel_parts)
-            if only_deps and not in_deps(rel):
-                continue
-            if not rel_parts or any(_skip_dir("/".join(rel_parts[:i]), d) for i, d in enumerate(rel_parts[:-1])) \
-                    or (rel_parts[0] in SKIP_DIRS):
-                continue
-            target = root.joinpath(*rel_parts)
-            if root not in target.resolve().parents:
-                continue
+            rel_parts, rel, target = w
             if m.isdir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue

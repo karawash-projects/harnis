@@ -115,6 +115,7 @@ class Limits:
     auto_continue_max: int = 2
     reroute_from_support: bool = True
     max_turn_seconds: int = 0
+    cache_shared_across_users: bool = False
     max_output_tokens: int = 4096
     truncation_retries: int = 2
     history_max_chars: int = 120_000
@@ -421,7 +422,7 @@ class Orchestrator:
         neither is safe to serve from a cache keyed on the prompt alone."""
         st = rec.state
         prompt_version = self._prompt(rec, st["agent"])[1]
-        scope = f"{st['agent']}:v{prompt_version}"
+        scope = self._cache_scope(rec, f"{st['agent']}:v{prompt_version}")
         try:
             hit = self.d.cache.lookup(rec.tenant_id, scope, st["turn"]["clean_input"])
         except Exception:  # the cache is an optimisation: never fail a turn over it
@@ -648,7 +649,7 @@ class Orchestrator:
                 and self._is_first_message(st)):  # lookups only happen for first messages
             prompt_version = self._prompt(rec, st["agent"])[1]
             try:
-                self.d.cache.store(rec.tenant_id, f"{st['agent']}:v{prompt_version}",
+                self.d.cache.store(rec.tenant_id, self._cache_scope(rec, f"{st['agent']}:v{prompt_version}"),
                                    st["turn"]["clean_input"], out.text)
             except Exception:
                 log.exception("semantic cache store failed; answer not cached")
@@ -657,6 +658,13 @@ class Orchestrator:
         return END
 
     # -- helpers ---------------------------------------------------------------
+    def _cache_scope(self, rec: SessionRecord, scope: str) -> str:
+        """Cached answers are per user unless the deployment opts in to sharing them: a shared
+        cache lets one user's first message reach colleagues, and lets a user seed answers."""
+        if self.d.limits.cache_shared_across_users:
+            return scope
+        return f"{scope}:u{hashlib.sha256(rec.user_id.encode()).hexdigest()[:16]}"
+
     def _prompt(self, rec: SessionRecord, key: str) -> tuple[str, int]:
         found = self.d.store.get_prompt(rec.tenant_id, key)
         if found:

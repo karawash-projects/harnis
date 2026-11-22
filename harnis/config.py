@@ -216,6 +216,8 @@ class Settings(BaseSettings):
 
     # --- Semantic cache -----------------------------------------------------
     cache_enabled: bool = True
+    # Reuse cached first answers between users of a tenant. Off: each user only gets their own.
+    cache_shared_across_users: bool = False
     cache_distance_threshold: float = 0.08
     cache_ttl_seconds: int = 24 * 3600
     cache_vector_type: str = "FLOAT32"  # FLOAT16 halves memory on RediSearch 2.10+
