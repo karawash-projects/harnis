@@ -275,6 +275,19 @@ def remove_symlinks(workspace: Path) -> int:
     return n
 
 
+def read_capped_logs(container, limit: int) -> tuple[bytes, int]:
+    """Read a container's output without holding more than `limit` bytes: a command that prints
+    gigabytes must not be able to exhaust the API's memory. Returns (first `limit` bytes, total size)."""
+    kept = bytearray()
+    total = 0
+    out = container.logs(stdout=True, stderr=True, stream=True) or ()
+    for chunk in ([out] if isinstance(out, (bytes, bytearray)) else out):
+        total += len(chunk)
+        if len(kept) < limit:
+            kept += chunk[: limit - len(kept)]
+    return bytes(kept), total
+
+
 class _CappedSpool:
     """Receives the container's tar stream into a temporary file and stops as
     soon as it exceeds the limit, so a huge (or sparse) file can't exhaust the
@@ -560,10 +573,10 @@ class DockerSandbox:
                         container.kill()
                     except Exception:
                         pass
-                raw = container.logs(stdout=True, stderr=True) or b""
-                output = raw[: self.output_limit].decode("utf-8", errors="replace")
-                if len(raw) > self.output_limit:
-                    output += f"\n... [truncated {len(raw) - self.output_limit} bytes]"
+                kept, total = read_capped_logs(container, self.output_limit)
+                output = kept.decode("utf-8", errors="replace")
+                if total > self.output_limit:
+                    output += f"\n... [truncated {total - self.output_limit} bytes]"
                 if timed_out:
                     output += f"\n[killed after {timeout}s timeout]"
                 if mode == "copy" and (persist or egress):

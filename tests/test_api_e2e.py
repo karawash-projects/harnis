@@ -217,3 +217,31 @@ def test_health_runs_on_the_event_loop_not_in_the_worker_thread_pool(client):
     endpoint = next(r.endpoint for r in client.app.routes if getattr(r, "path", "") == "/health")
     assert inspect.iscoroutinefunction(endpoint)
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_websocket_tells_the_client_to_retry_when_redis_is_down(client, monkeypatch):
+    """A Redis outage must close the stream with "try again later" (the console reconnects), not crash it."""
+    from redis import asyncio as aioredis
+    from starlette.websockets import WebSocketDisconnect
+
+    class BrokenPubSub:
+        async def subscribe(self, *a):
+            raise ConnectionError("redis is down")
+
+        async def aclose(self):
+            pass
+
+    class BrokenRedis:
+        def pubsub(self):
+            return BrokenPubSub()
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(aioredis.Redis, "from_url", staticmethod(lambda *a, **k: BrokenRedis()))
+    token = mint_token("alice", "acme", ["user"])
+    with pytest.raises(WebSocketDisconnect) as e:
+        with client.websocket_connect("/v1/ws") as ws:
+            ws.send_json({"type": "auth", "token": token})
+            ws.receive_text()
+    assert e.value.code == 1013

@@ -170,6 +170,9 @@ class Settings(BaseSettings):
     sandbox_cpus: float = 1.0
     sandbox_pids_limit: int = 128
     sandbox_output_limit_bytes: int = 64_000
+    # install_dependencies installs wheels only, so no package runs code while it installs. Set true to also
+    # allow building source distributions (some packages publish no wheel); they run their build scripts.
+    pip_allow_sdists: bool = False
     # "copy" streams the workspace in and out through the Docker API and works
     # on every OS and with remote daemons. "bind" bind-mounts it (Linux only).
     sandbox_workspace_mode: str = "copy"

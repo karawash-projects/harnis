@@ -215,3 +215,34 @@ def test_session_lock_is_renewed_while_held_and_released_when_the_holder_dies():
     time.sleep(0.5)
     with lock.hold("s10") as d:
         assert d
+
+
+def test_latency_alert_names_the_tenant_and_is_not_merged_across_spans():
+    from opentelemetry.sdk.trace import TracerProvider
+
+    from harnis.telemetry import LatencyAlertProcessor
+
+    a = AlertDispatcher(redis=fakeredis.FakeRedis(), dedupe_seconds=60)
+    provider = TracerProvider()
+    provider.add_span_processor(LatencyAlertProcessor({"model": 1, "sandbox": 1}, a))
+    tracer = provider.get_tracer("t")
+    with tracer.start_as_current_span("turn") as turn:
+        turn.set_attribute("harnis.tenant_id", "acme")
+        with tracer.start_as_current_span("model"):
+            time.sleep(0.01)
+        with tracer.start_as_current_span("sandbox"):
+            time.sleep(0.01)
+    assert len(a.sent) == 2                              # a slow sandbox run did not hide a slow model call
+    assert all("acme" in str(p) for p in a.sent)
+
+
+def test_sandbox_output_is_read_with_a_memory_cap():
+    from harnis.sandbox import read_capped_logs
+
+    class C:
+        def logs(self, stdout, stderr, stream):
+            assert stream is True
+            return (b"x" * 1000 for _ in range(10_000))   # 10 MB, never held at once
+
+    kept, total = read_capped_logs(C(), 64_000)
+    assert len(kept) == 64_000 and total == 10_000_000

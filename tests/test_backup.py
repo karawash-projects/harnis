@@ -45,7 +45,7 @@ def test_backup_and_restore_drill(db, tmp_path):
 
         backup = create(tmp_path / "backups", owner, ws)
         manifest = verify(backup)
-        assert manifest["tenants"] == 1 and manifest["migrations"][-1].startswith("011")
+        assert manifest["tenants"] == 1 and manifest["migrations"][-1].startswith("012")
 
         # Disaster: data deleted, files lost, a tampered backup is refused.
         with pgdrv.connect(owner, autocommit=True) as c:
@@ -70,3 +70,73 @@ def test_backup_and_restore_drill(db, tmp_path):
         assert store.load_session("globex", rec.session_id) is None
     finally:
         pool.close()
+
+
+def test_restore_failing_midway_puts_the_previous_database_back(db, tmp_path, monkeypatch):
+    import subprocess
+
+    from harnis import backup as backup_mod
+
+    owner, app = db
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    backup = create(tmp_path / "backups", owner, ws)
+    real = subprocess.run
+
+    def flaky(cmd, *a, **k):
+        if "--single-transaction" in cmd:
+            raise subprocess.CalledProcessError(1, cmd)    # fails after the old schema was set aside
+        return real(cmd, *a, **k)
+
+    monkeypatch.setattr(backup_mod.subprocess, "run", flaky)
+    with pytest.raises(subprocess.CalledProcessError):
+        restore(backup, owner, ws, app_password="harnis_app")
+    with pgdrv.connect(owner, autocommit=True) as c:
+        assert c.execute("SELECT count(*) FROM tenants WHERE tenant_id = 'acme'").fetchone()[0] == 1
+        assert c.execute("SELECT count(*) FROM pg_namespace WHERE nspname = 'harnis_pre_restore'").fetchone()[0] == 0
+
+
+def test_failed_restore_leaves_the_current_database_and_files_alone(db, tmp_path):
+    owner, app = db
+    ws = tmp_path / "ws"
+    (ws / "acme" / "s1").mkdir(parents=True)
+    (ws / "acme" / "s1" / "keep.txt").write_text("current")
+    backup = create(tmp_path / "backups", owner, ws)
+
+    # A backup from a newer Harnis is refused before anything is touched.
+    import json
+    newer = tmp_path / "newer"
+    shutil.copytree(backup, newer)
+    m = json.loads((newer / "manifest.json").read_text())
+    m["migrations"].append("999_from_the_future.sql")
+    (newer / "manifest.json").write_text(json.dumps(m))
+    with pytest.raises(ValueError, match="newer Harnis"):
+        restore(newer, owner, ws, app_password="harnis_app")
+
+    # A truncated workspace archive is refused up front too (the checksum is recomputed to get past verify()).
+    from harnis.backup import _sha256
+    bad = tmp_path / "bad"
+    shutil.copytree(backup, bad)
+    arc = bad / "workspaces.tar.gz"
+    arc.write_bytes(arc.read_bytes()[:40])
+    m = json.loads((bad / "manifest.json").read_text())
+    m["files"]["workspaces.tar.gz"] = {"sha256": _sha256(arc), "bytes": 40}
+    (bad / "manifest.json").write_text(json.dumps(m))
+    with pytest.raises(ValueError, match="workspace archive"):
+        restore(bad, owner, ws, app_password="harnis_app")
+
+    # A dump that fails halfway through pg_restore puts the existing database back.
+    broken = tmp_path / "broken-dump"
+    shutil.copytree(backup, broken)
+    dump = broken / "database.dump"
+    raw = dump.read_bytes()
+    dump.write_bytes(raw[: len(raw) // 2])
+    m = json.loads((broken / "manifest.json").read_text())
+    m["files"]["database.dump"] = {"sha256": _sha256(dump), "bytes": dump.stat().st_size}
+    (broken / "manifest.json").write_text(json.dumps(m))
+    with pytest.raises(Exception):
+        restore(broken, owner, ws, app_password="harnis_app")
+    with pgdrv.connect(owner, autocommit=True) as c:
+        assert c.execute("SELECT count(*) FROM tenants WHERE tenant_id = 'acme'").fetchone()[0] == 1
+        assert c.execute("SELECT count(*) FROM pg_namespace WHERE nspname = 'harnis_pre_restore'").fetchone()[0] == 0
+    assert (ws / "acme" / "s1" / "keep.txt").read_text() == "current"

@@ -376,3 +376,16 @@ def test_reserved_dir_is_case_insensitive_and_symlinks_are_not_listed(tmp_path):
         assert list_workspace(tmp_path) == ["real.txt"]
         from harnis.tools import read_regular
         assert read_regular(tmp_path / "link.txt", 1000) is None and read_regular(tmp_path / "real.txt", 10) == "ok"
+
+
+def test_pip_installs_wheels_only_unless_the_operator_allows_builds(monkeypatch):
+    from harnis.config import get_settings
+
+    assert "--only-binary=:all:" in install_command("pip", "requirements.txt")
+    monkeypatch.setenv("PIP_ALLOW_SDISTS", "true")
+    get_settings.cache_clear()
+    try:
+        assert "--only-binary" not in install_command("pip", "requirements.txt")
+    finally:
+        monkeypatch.delenv("PIP_ALLOW_SDISTS")
+        get_settings.cache_clear()

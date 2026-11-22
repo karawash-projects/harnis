@@ -90,49 +90,92 @@ def verify(backup: Path) -> dict:
     return manifest
 
 
+def _known_migrations() -> set[str]:
+    from importlib import resources
+    return {f.name for f in resources.files("harnis.migrations").iterdir() if f.name.endswith(".sql")}
+
+
+def preflight(backup: Path, pg_bin: str = "") -> dict:
+    """Everything that can be checked before the live database is touched: checksums, that the dump
+    is readable, that the workspace archive is intact, and that this Harnis knows the backup's schema."""
+    manifest = verify(backup)
+    newer = sorted(set(manifest.get("migrations", [])) - _known_migrations())
+    if newer:
+        raise ValueError(f"this backup comes from a newer Harnis (schema {newer[-1]}); upgrade before restoring it")
+    with (backup / "database.dump").open("rb") as f:
+        r = subprocess.run([*shlex.split(pg_bin), "pg_restore", "--list"], stdin=f, capture_output=True)
+    if r.returncode != 0:
+        raise ValueError("the database dump is not readable: " + r.stderr.decode("utf-8", "replace")[:200])
+    try:
+        with tarfile.open(backup / "workspaces.tar.gz", "r:gz") as tar:
+            tar.getmembers()  # reads the whole archive, so a truncated file fails here, not after the swap
+    except (tarfile.TarError, EOFError, OSError) as exc:
+        raise ValueError(f"the workspace archive is not readable: {exc}") from exc
+    return manifest
+
+
+def _extract_workspaces(backup: Path, dest: Path) -> None:
+    with tarfile.open(backup / "workspaces.tar.gz", "r:gz") as tar:
+        dest.mkdir(parents=True)
+        for m in tar.getmembers():
+            parts = Path(m.name).parts
+            if not parts or parts[0] != "workspaces" or ".." in parts or not (m.isfile() or m.isdir()):
+                continue
+            target = dest / (Path(*parts[1:]) if len(parts) > 1 else Path())
+            if dest not in target.resolve().parents and target.resolve() != dest:
+                continue
+            if m.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                src = tar.extractfile(m)
+                if src is not None:
+                    target.write_bytes(src.read())
+
+
 def restore(backup: Path, dsn: str, workspaces: Path, pg_bin: str = "", app_password: str | None = None) -> dict:
+    """Replace the database and workspaces with a backup. Nothing is thrown away until the
+    replacement is in place: the current data is set aside and put back if the restore fails."""
+    import shutil
+
     from .migrate import _ensure_roles, apply_migrations
 
-    manifest = verify(backup)
+    manifest = preflight(backup, pg_bin)
     prefix = shlex.split(pg_bin)
+    aside = "harnis_pre_restore"
     with pg.connect(dsn, autocommit=True) as conn:
         _ensure_roles(conn, app_password or get_settings().app_db_password)  # roles are cluster-wide
+        conn.execute(f"DROP SCHEMA IF EXISTS {aside} CASCADE")  # left over from an interrupted restore
         # Restore into an empty schema. (`pg_restore --clean` can't drop the
-        # inherited constraints of the partitioned token ledger.)
-        conn.execute("DROP SCHEMA IF EXISTS public CASCADE")
+        # inherited constraints of the partitioned token ledger.) The old one is kept until this works.
+        conn.execute(f"ALTER SCHEMA public RENAME TO {aside}")
         conn.execute("CREATE SCHEMA public")
         # Match a fresh database's `public` schema: the dump only records
         # privileges that differ from that default.
         conn.execute("GRANT USAGE ON SCHEMA public TO PUBLIC")
         if conn.info.server_version >= 150000:
             conn.execute("ALTER SCHEMA public OWNER TO pg_database_owner")
-    with (backup / "database.dump").open("rb") as f:
-        subprocess.run([*prefix, "pg_restore", "--single-transaction", "--exit-on-error",
-                        "--dbname", _dsn_for(prefix, dsn)], stdin=f, check=True)
+    try:
+        with (backup / "database.dump").open("rb") as f:
+            subprocess.run([*prefix, "pg_restore", "--single-transaction", "--exit-on-error",
+                            "--dbname", _dsn_for(prefix, dsn)], stdin=f, check=True)
+    except BaseException:
+        with pg.connect(dsn, autocommit=True) as conn:  # put the previous database back
+            conn.execute("DROP SCHEMA IF EXISTS public CASCADE")
+            conn.execute(f"ALTER SCHEMA {aside} RENAME TO public")
+        raise
+    with pg.connect(dsn, autocommit=True) as conn:
+        conn.execute(f"DROP SCHEMA IF EXISTS {aside} CASCADE")
     root = workspaces.resolve()
-    with tarfile.open(backup / "workspaces.tar.gz", "r:gz") as tar:
-        members = []
-        for m in tar.getmembers():
-            parts = Path(m.name).parts
-            if not parts or parts[0] != "workspaces" or ".." in parts or not (m.isfile() or m.isdir()):
-                continue
-            members.append(m)
-        if root.exists():
-            import shutil
-            shutil.rmtree(root)
-        root.mkdir(parents=True)
-        for m in members:
-            rel = Path(*Path(m.name).parts[1:]) if len(Path(m.name).parts) > 1 else Path()
-            dest = root / rel
-            if root not in dest.resolve().parents and dest.resolve() != root:
-                continue
-            if m.isdir():
-                dest.mkdir(parents=True, exist_ok=True)
-            else:
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                src = tar.extractfile(m)
-                if src is not None:
-                    dest.write_bytes(src.read())
+    staging = root.with_name(root.name + ".restoring")
+    old = root.with_name(root.name + ".replaced")
+    for leftover in (staging, old):
+        shutil.rmtree(leftover, ignore_errors=True)
+    _extract_workspaces(backup, staging)
+    if root.exists():
+        root.rename(old)
+    staging.rename(root)
+    shutil.rmtree(old, ignore_errors=True)
     newer = apply_migrations(dsn, app_password=app_password)
     with pg.connect(dsn, autocommit=True) as conn:
         conn.execute("SET ROLE harnis_analytics")
