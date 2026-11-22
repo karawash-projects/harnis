@@ -736,6 +736,11 @@ class Check:
             v = self.turn(self.user, sid, "repeat: list the files")
             expect(v["status"] == "escalated" and "loop_detected" in v["flags"], f"{v['status']} {v['flags']}")
             self.state.setdefault("audit_expect", set()).add("loop_detected")
+            # A repeated loop freezes the tenant's writes (trip wire); lift it so later checks can write.
+            if getattr(self, "platform", None):
+                card = status_is(c.call("GET", "/v1/scorecard", self.reviewer), 200).json()
+                expect(card["trip"]["writes_frozen"], "loop did not freeze writes")
+                status_is(c.call("POST", f"/v1/admin/tenants/{self.tenant}/clear-trip", self.platform), 200)
         r.check("loop breaker stops an agent repeating itself", loop)
 
     # -- 7. tenancy ----------------------------------------------------------------------------
