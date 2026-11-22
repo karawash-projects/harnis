@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-22
+
+### Fixed
+- **Sandbox output no longer sits in memory.** The Docker sandbox read a command's whole output before cutting it to the limit, so a command printing gigabytes could exhaust the API's memory. It now streams the output and keeps only the limit (the Kubernetes sandbox already did).
+- **Restore is safer.** It checks everything it can before touching the live data (checksums, that the dump and the workspace archive are readable, that the backup is not from a newer Harnis). The current database is set aside and put back if the restore fails, and workspaces are extracted beside the live folder and swapped in, so a failure no longer leaves an empty database or no files.
+- **Event stream (WebSocket)**: if Redis is unavailable when a client connects, or the connection to it drops, the server now closes with "try again later" (1013) and the console reconnects, instead of failing with a server error or going silent.
+- **Circuit breaker**: failures are counted and the circuit opened in one atomic step (the window no longer stretches with each failure, and a crash cannot leave a counter that never expires). If Redis is unreachable the breaker falls back to this process's own state instead of failing the model call.
+- **Latency alerts** say which tenant they belong to (model calls, sandbox runs and checkpoints now inherit it from the turn), and a slow sandbox run no longer suppresses a slow model call's alert for the dedupe window.
+
+### Changed
+- `install_dependencies` installs **wheels only** (`pip --only-binary=:all:`), so no package builds or runs install-time code, as npm already did with `--ignore-scripts`. Packages that publish no wheel fail to install; set `PIP_ALLOW_SDISTS=true` to allow building them.
+- Migration 012: tenant deletion and clearing a trip wire are refused when a tenant is selected on the connection, so tenant-scoped code cannot reach them. The platform API is unaffected.
+
 ## [1.10.0] - 2026-11-22
 
 ### Added

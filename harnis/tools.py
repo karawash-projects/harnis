@@ -311,8 +311,12 @@ def install_command(manager: str, rel: str) -> str:
         source = "." if PurePosixPath(rel).name == "pyproject.toml" else "-r " + shlex.quote(rel)
         if PurePosixPath(rel).name == "pyproject.toml" and str(PurePosixPath(rel).parent) != ".":
             source = shlex.quote(str(PurePosixPath(rel).parent))
+        # Wheels only: building a source distribution runs the package's own code (setup.py, build hooks)
+        # at install time. This is the pip counterpart of npm's --ignore-scripts. PIP_ALLOW_SDISTS=true lifts it.
+        from .config import get_settings
+        wheels = "" if get_settings().pip_allow_sdists else "--only-binary=:all: "
         return (f"mkdir -p {target} && python -m pip install --no-input --no-cache-dir --target {target} "
-                f"--upgrade {source} 2>&1")
+                f"{wheels}--upgrade {source} 2>&1")
     folder = str(PurePosixPath(rel).parent)
     lock = "package-lock.json" if folder == "." else f"{folder}/package-lock.json"
     # Lifecycle scripts are disabled: packages can't run code at install time.

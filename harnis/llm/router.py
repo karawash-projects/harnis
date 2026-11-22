@@ -36,21 +36,42 @@ class CircuitBreaker:
         self._mem_failures: dict[str, int] = {}
         self._mem_open_until: dict[str, float] = {}
 
+    # Count a failure and open the circuit in one step, so replicas cannot race and a crash cannot leave
+    # a counter that never expires. The window starts at the first failure and is not extended by later ones.
+    _FAIL = """
+    local n = redis.call('INCR', KEYS[1])
+    if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end
+    if n >= tonumber(ARGV[1]) then
+      redis.call('SET', KEYS[2], 1, 'EX', ARGV[2])
+      redis.call('DEL', KEYS[1])
+      return 1
+    end
+    return 0
+    """
+
+    def _redis_down(self, exc: Exception) -> None:
+        # The breaker protects the providers; it must never be the reason a request fails. While Redis
+        # is unreachable each replica falls back to its own in-memory view.
+        if time.time() - getattr(self, "_warned", 0) > 60:
+            self._warned = time.time()
+            log.warning("circuit breaker: Redis unavailable (%s); using this process's own state", exc)
+
     def is_open(self, key: str) -> bool:
         if self.redis is not None:
-            return bool(self.redis.exists(f"circuit:open:{key}"))
+            try:
+                return bool(self.redis.exists(f"circuit:open:{key}")) or self._mem_open_until.get(key, 0) > time.time()
+            except Exception as exc:  # redis.RedisError and connection problems
+                self._redis_down(exc)
         return self._mem_open_until.get(key, 0) > time.time()
 
     def record_failure(self, key: str) -> bool:
         """Returns True if this failure tripped the breaker."""
         if self.redis is not None:
-            n = self.redis.incr(f"circuit:fail:{key}")
-            self.redis.expire(f"circuit:fail:{key}", self.open_seconds)
-            if n >= self.threshold:
-                self.redis.set(f"circuit:open:{key}", 1, ex=self.open_seconds)
-                self.redis.delete(f"circuit:fail:{key}")
-                return True
-            return False
+            try:
+                return bool(self.redis.eval(self._FAIL, 2, f"circuit:fail:{key}", f"circuit:open:{key}",
+                                            self.threshold, self.open_seconds))
+            except Exception as exc:
+                self._redis_down(exc)
         n = self._mem_failures.get(key, 0) + 1
         self._mem_failures[key] = n
         if n >= self.threshold:
@@ -60,10 +81,12 @@ class CircuitBreaker:
         return False
 
     def record_success(self, key: str) -> None:
+        self._mem_failures[key] = 0
         if self.redis is not None:
-            self.redis.delete(f"circuit:fail:{key}")
-        else:
-            self._mem_failures[key] = 0
+            try:
+                self.redis.delete(f"circuit:fail:{key}")
+            except Exception as exc:
+                self._redis_down(exc)
 
 
 class AllProvidersFailed(Exception):

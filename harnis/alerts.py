@@ -51,7 +51,8 @@ class AlertDispatcher:
         return bool(self.redis.set(f"alert:dedupe:{key}", 1, nx=True, ex=self.dedupe))
 
     def __call__(self, kind: str, tenant: str, session: str | None, detail: dict[str, Any]) -> None:
-        if not self._should_send(f"{kind}:{tenant}"):
+        # One alert per kind, tenant and (where there is one) span, so a slow sandbox run does not hide a slow model call.
+        if not self._should_send(f"{kind}:{tenant}:{detail.get('span', '')}"):
             return
         build = discord_payload if self.kind == "discord" else slack_payload
         payload = build(kind, tenant, session, detail)

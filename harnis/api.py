@@ -781,7 +781,17 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
         channels = [f"events:{p.tenant_id}:user:{p.user_id}"]
         if p.has("reviewer"):
             channels.append(f"events:{p.tenant_id}:reviewers")
-        await pubsub.subscribe(*channels)
+        try:
+            await pubsub.subscribe(*channels)
+        except Exception as exc:  # Redis down: tell the client to retry instead of dying with a server error
+            log.warning("event stream for %s/%s: cannot subscribe: %s", p.tenant_id, p.user_id, exc)
+            try:
+                await pubsub.aclose()
+                await ar.aclose()
+            except Exception:
+                pass
+            await websocket.close(code=1013)  # "try again later"; the console reconnects with a growing delay
+            return
 
         async def pump() -> None:
             async for msg in pubsub.listen():
@@ -806,11 +816,15 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
         tasks = [asyncio.create_task(pump()), asyncio.create_task(reader()), asyncio.create_task(watchdog())]
         try:
             await websocket.send_text(json.dumps({"type": "hello", "channels": len(channels)}))
-            done, _ = await asyncio.wait(tasks[1:], return_when=asyncio.FIRST_COMPLETED)
+            # pump too: if the Redis connection drops the stream goes silent, so end it and let the client reconnect.
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             watch = tasks[2]
             if watch in done and not watch.cancelled() and watch.exception() is None:
                 log.info("closing event stream for %s/%s: credential no longer valid", p.tenant_id, p.user_id)
                 await websocket.close(code=watch.result())
+            elif tasks[0] in done and not tasks[0].cancelled():
+                log.warning("event stream for %s/%s ended: %r", p.tenant_id, p.user_id, tasks[0].exception())
+                await websocket.close(code=1013)
         except WebSocketDisconnect:
             pass
         finally:
@@ -821,9 +835,11 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
                     await t
                 except (asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
                     pass
-            await pubsub.unsubscribe()
-            await pubsub.aclose()
-            await ar.aclose()
+            for closer in (pubsub.unsubscribe, pubsub.aclose, ar.aclose):
+                try:
+                    await closer()
+                except Exception:  # connection already gone
+                    pass
 
     return app
 

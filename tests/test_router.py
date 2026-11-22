@@ -123,3 +123,31 @@ def test_mock_provider_routes_by_keyword():
     r = m.complete(LLMRequest(system="", messages=[Message("user", [{"type": "text", "text": "fix the bug"}])],
                               tools=[ROUTE_TOOL.spec()], force_tool="route"))
     assert r.tool_calls[0]["input"]["agent"] == "coder"
+
+
+def test_circuit_breaker_survives_redis_outage():
+    """The breaker protects providers; it must not be the reason a request fails."""
+    class Down:
+        def __getattr__(self, name):
+            def boom(*a, **k):
+                raise ConnectionError("redis is down")
+            return boom
+
+    b = CircuitBreaker(Down(), threshold=2, open_seconds=60)
+    assert b.is_open("x") is False
+    assert b.record_failure("x") is False
+    assert b.record_failure("x") is True           # falls back to this process's own count
+    assert b.is_open("x") is True
+    b.record_success("x")
+
+
+def test_circuit_failure_window_starts_once_and_trips_atomically():
+    fakeredis = pytest.importorskip("fakeredis")
+    shared = fakeredis.FakeRedis()
+    b = CircuitBreaker(shared, threshold=3, open_seconds=60)
+    b.record_failure("y")
+    ttl = shared.ttl("circuit:fail:y")
+    b.record_failure("y")
+    assert shared.ttl("circuit:fail:y") <= ttl        # later failures do not extend the window
+    assert b.record_failure("y") is True
+    assert shared.exists("circuit:open:y") and not shared.exists("circuit:fail:y")

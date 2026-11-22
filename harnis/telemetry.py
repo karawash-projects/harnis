@@ -33,6 +33,14 @@ class LatencyAlertProcessor(SpanProcessor):
         self.thresholds = thresholds_ms
         self.alert = alert
 
+    def on_start(self, span, parent_context=None) -> None:
+        # Only the turn span knows the tenant; hand it down so an alert from a model call, a sandbox
+        # run or a checkpoint says whose it was instead of "-".
+        parent = trace.get_current_span(parent_context)
+        tenant = (getattr(parent, "attributes", None) or {}).get("harnis.tenant_id")
+        if tenant and "harnis.tenant_id" not in (span.attributes or {}):
+            span.set_attribute("harnis.tenant_id", tenant)
+
     def on_end(self, span: ReadableSpan) -> None:
         limit = self.thresholds.get(span.name)
         if limit is None or span.start_time is None or span.end_time is None:
