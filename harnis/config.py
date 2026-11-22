@@ -178,6 +178,8 @@ class Settings(BaseSettings):
     # install_dependencies installs wheels only, so no package runs code while it installs. Set true to also
     # allow building source distributions (some packages publish no wheel); they run their build scripts.
     pip_allow_sdists: bool = False
+    # TOML file limiting which workspace files agents may read or write (see harnis/pathpolicy.py). Empty = no limits.
+    path_policy_file: str = ""
     # "copy" streams the workspace in and out through the Docker API and works
     # on every OS and with remote daemons. "bind" bind-mounts it (Linux only).
     sandbox_workspace_mode: str = "copy"

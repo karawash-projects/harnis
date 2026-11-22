@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-11-22
+
+### Added
+- **Path policy**: `PATH_POLICY_FILE` points at a TOML file with `deny_read`, `deny_write` and an optional `allow_write` list of glob patterns (`*`, `**`, `?`, case-insensitive; a deny always wins). Agents cannot read, write or list files the policy forbids; a forbidden write is refused before a reviewer is asked, and the refusal is audited as `path_denied`. A broken policy file stops startup. Example: `examples/path-policy.toml`.
+- The policy covers the file tools only. A command an agent runs with `run_command`, or an install, can still change files inside the sandbox; those stay covered by the reviewer's approval of the exact command.
+
 ## [1.12.0] - 2026-11-22
 
 ### Added

@@ -39,7 +39,7 @@ from .llm.router import AllProvidersFailed, LLMRouter
 from .llm.types import LLMRequest, Message, ProviderError
 from .llm.pricing import cost_usd
 from .plugins import Registry, default_registry
-from .tools import ROUTE_TOOL, ToolContext, action_hash, describe_action
+from .tools import ROUTE_TOOL, ToolContext, WorkspaceError, action_hash, describe_action, normalize_rel
 
 log = logging.getLogger(__name__)
 tracer = trace.get_tracer("harnis.orchestrator")
@@ -139,6 +139,7 @@ class Deps:
     alert: Alerter = lambda kind, tenant, session, detail: None
     limits: Limits = field(default_factory=Limits)
     registry: Registry = field(default_factory=default_registry)
+    paths: Any = None  # PathPolicy or None
 
 
 def new_state() -> dict[str, Any]:
@@ -501,7 +502,7 @@ class Orchestrator:
         st = rec.state
         turn = st["turn"]
         ws = workspace_for(self.d.workspaces_dir, rec.tenant_id, rec.session_id)
-        ctx = ToolContext(ws, self.d.sandbox, rec.tenant_id, rec.user_id, rec.session_id)
+        ctx = ToolContext(ws, self.d.sandbox, rec.tenant_id, rec.user_id, rec.session_id, self.d.paths)
         done = {r["tool_use_id"] for r in st["tool_results"]}
 
         for call in st["pending_tool_calls"]:
@@ -578,6 +579,18 @@ class Orchestrator:
                                       f"A human operator will take over. Reason: {parsed.reason}")  # type: ignore[attr-defined]
                 continue
 
+            if self.d.paths is not None and not resuming and name in ("read_file", "write_file"):
+                try:
+                    rel = normalize_rel(getattr(parsed, "path", ""))
+                except WorkspaceError:
+                    rel = ""
+                why = rel and (self.d.paths.write_denied(rel) if name == "write_file" else self.d.paths.read_denied(rel))
+                if why:
+                    # Refused before anyone is asked to approve something policy forbids anyway.
+                    self.d.store.audit(rec.tenant_id, rec.session_id, "harnis", "path_denied", {"tool": name, "path": rel})
+                    metrics.TOOL_CALLS.labels(metrics.safe(name), "denied").inc()
+                    result(why, True)
+                    continue
             if tool.risk == "high" and not resuming:
                 if self.d.store.tenant_policy(rec.tenant_id).get("writes_frozen"):
                     result("writes are frozen for this tenant by a safety trip wire; an administrator "
