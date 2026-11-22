@@ -99,6 +99,19 @@ class PgStore:
         with self._tx(tenant_id) as conn:
             return conn.execute("SELECT * FROM approvals WHERE approval_id = %s", (approval_id,)).fetchone()
 
+    def expire_approval(self, tenant_id: str, approval_id: str) -> bool:
+        """True when the approval has run out (marking a still-pending one as expired)."""
+        with self._tx(tenant_id) as conn:
+            row = conn.execute("SELECT status, expires_at <= now() AS late FROM approvals"
+                               " WHERE approval_id = %s FOR UPDATE", (approval_id,)).fetchone()
+            if row is None:
+                return False
+            if row["status"] == "pending" and row["late"]:
+                conn.execute("UPDATE approvals SET status = 'expired', decided_by = 'harnis', decided_at = now()"
+                             " WHERE approval_id = %s", (approval_id,))
+                return True
+            return row["status"] == "expired"
+
     def decide_approval(self, tenant_id: str, approval_id: str, approved: bool, decided_by: str,
                         action_hash: str, enqueue: bool = False) -> tuple[dict[str, Any], bool]:
         """Atomically record a decision. Returns (approval, effective_approved).
@@ -266,7 +279,8 @@ class PgStore:
                          "trip_wire", "tests_failing", "history_compacted", "spend_cap_reached",
                          "internal_error", "escalated_by_agent", "injection_before_write",
                          "time_budget_exceeded", "cost_budget_exceeded"]) ).fetchall()}
-            pending = conn.execute("SELECT count(*) AS n FROM approvals WHERE status = 'pending'").fetchone()["n"]
+            pending = conn.execute("SELECT count(*) AS n FROM approvals WHERE status = 'pending'"
+                                 " AND expires_at > now()").fetchone()["n"]
             tripped = conn.execute("SELECT writes_frozen, tripped_reason, tripped_at, active FROM tenants").fetchone()
         total = sum(outcomes.values())
         bad = outcomes.get("failed", 0) + outcomes.get("escalated", 0)

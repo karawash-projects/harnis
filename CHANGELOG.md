@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-11-22
+
+### Fixed
+- **Approvals nobody decides no longer strand a session.** A session waiting for an approval that ran out kept answering 409 to every new message. Now the next message releases it: the approval is marked `expired`, the action is not run, the audit log records `approval_expired`, and the new message is processed. The scorecard's pending-approvals count ignores expired ones.
+- **Replies cut off at the output limit are no longer delivered as complete.** A reply that stops at `max_tokens` is continued (twice at most, then delivered with a note that it was cut off); a tool call cut off mid-arguments is discarded and never run. Flagged `output_truncated`. The per-call output limit is now `MAX_OUTPUT_TOKENS` (default 4096, was 2048).
+
 ### Changed
 - Accepts pgtern 0.4 (`pgtern>=0.3,<0.5`); the suite passes on 0.3.0 and 0.4.1. pgtern 0.4 raises when a transaction that already failed is committed (0.3 rolled it back silently); Harnis itself is unaffected, and two tests that expected a failing statement now roll back explicitly.
 
