@@ -196,6 +196,7 @@ class ToolContext:
     tenant_id: str = ""
     user_id: str = ""
     session_id: str = ""
+    paths: Any = None          # PathPolicy or None: which files the file tools may read and write
 
 
 @dataclass
@@ -244,11 +245,15 @@ class Tool:
 
 def _list(ctx: ToolContext, _: BaseModel) -> tuple[str, bool]:
     files = list_workspace(ctx.workspace)
+    if ctx.paths is not None:
+        files = [f for f in files if not ctx.paths.read_denied(f)]  # files an agent may not read are not shown
     return ("\n".join(files) if files else "(workspace is empty)"), False
 
 
 def _read(ctx: ToolContext, a: ReadFile) -> tuple[str, bool]:  # type: ignore[override]
     try:
+        if ctx.paths is not None and (why := ctx.paths.read_denied(normalize_rel(a.path))):
+            return why, True
         p = safe_path(ctx.workspace, a.path)
         if not p.is_file():
             return f"no such file: {a.path}", True
@@ -263,6 +268,8 @@ def _write(ctx: ToolContext, a: WriteFile) -> tuple[str, bool]:  # type: ignore[
     try:
         if is_reserved(a.path):
             return f"{RESERVED_DIR}/ is reserved for installed dependencies; use install_dependencies", True
+        if ctx.paths is not None and (why := ctx.paths.write_denied(normalize_rel(a.path))):
+            return why, True
         p = safe_path(ctx.workspace, a.path)
         p.parent.mkdir(parents=True, exist_ok=True)
         write_text(p, a.content)

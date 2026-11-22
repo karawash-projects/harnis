@@ -113,10 +113,10 @@ def sandbox():
 
 @pytest.fixture
 def make_orch(tmp_path):
-    def factory(store, sandbox=None, providers=None, limits=None, cache=None, alerts=None):
+    def factory(store, sandbox=None, providers=None, limits=None, cache=None, alerts=None, paths=None):
         deps = Deps(store=store, router=LLMRouter(providers or [MockProvider()], sleep=lambda s: None),
                     sandbox=sandbox or FakeSandbox(), workspaces_dir=tmp_path / "ws",
-                    limits=limits or Limits(), cache=cache,
+                    limits=limits or Limits(), cache=cache, paths=paths,
                     alert=(lambda *a: alerts.append(a)) if alerts is not None else (lambda *a: None))
         return Orchestrator(deps)
     return factory

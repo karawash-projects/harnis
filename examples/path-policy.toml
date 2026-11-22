@@ -1,0 +1,11 @@
+# Example path policy: which workspace files agents may read or write.
+# Point PATH_POLICY_FILE at a copy of this file. See docs/operations.md ("Path policy").
+
+# Agents cannot read these, and they are left out of file listings.
+deny_read = ["**/.env", "**/*.pem", "secrets/**"]
+
+# Agents cannot write these (a deny always wins over allow_write).
+deny_write = [".github/**", "**/.env", "**/*.pem", "Dockerfile"]
+
+# Optional: if present, writes are limited to these paths.
+# allow_write = ["src/**", "tests/**"]

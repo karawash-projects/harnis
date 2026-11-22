@@ -182,6 +182,9 @@ config:
   # CONSOLE_ACCENT: "#1f5c4f"
   # CONSOLE_ACCENT_DARK: "#7cc0aa"
   # CONSOLE_HELP_URL: "https://it.example.com/help"
+  # Path policy (see docs/operations.md): which files agents may read or write. The file is inside the Pod:
+  # mount a ConfigMap with api.extraVolumes/extraVolumeMounts and point PATH_POLICY_FILE at it. Workers use the API's settings.
+  # PATH_POLICY_FILE: "/policy/path-policy.toml"
 
 # -----------------------------------------------------------------------------
 # Secrets

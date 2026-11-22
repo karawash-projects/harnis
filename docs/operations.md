@@ -145,6 +145,20 @@ Reviewers can filter the queue by agent and tool, sort by age or by time left, a
 
 Usage & analytics shows, for 7, 30 or 90 days: spend by user and by agent (admins; `GET /v1/admin/spend`) and approval statistics (reviewers; `GET /v1/approval-stats`): counts, approval rate, median and 90th-percentile time from request to decision, and a per-tool breakdown. The token ledger records no user or agent, so spend is attributed through the conversation (its owner and the agent it ended on); calls from conversations deleted by retention or erasure appear as "(erased or expired)". Harnis has no teams, so there is no per-team view. The audit log can be filtered by user and date range (`actor`, `since`, `until`), including in the NDJSON export.
 
+## Path policy
+
+Some files should never be touched by an agent: CI workflows, deployment files, key material, `.env` files. Set `PATH_POLICY_FILE` to a TOML file (start from `examples/path-policy.toml`):
+
+```toml
+deny_read   = ["**/.env", "secrets/**"]       # cannot be read, and are left out of file listings
+deny_write  = [".github/**", "**/*.pem"]      # cannot be written
+allow_write = ["src/**", "tests/**"]          # optional: writes are limited to these
+```
+
+Patterns match the workspace-relative path without regard to case: `*` stays within a folder, `**` crosses folders, a trailing `/` means everything below it. A deny always wins over `allow_write`. A forbidden write is refused before a reviewer is asked to approve it, and the refusal is recorded in the audit log as `path_denied`. A policy file that cannot be read or has an unknown key stops startup, so a typo cannot silently turn the policy off. Workers use the same file as the API.
+
+**What it does not cover.** The policy governs the file tools (`read_file`, `write_file`, `list_files`). A command run with `run_command`, and a dependency install, execute inside the sandbox and can change files there; they are controlled by the reviewer's approval of the exact command, the sandbox itself, and `REQUIRE_TESTS`. Treat the policy as a guard against an agent editing the wrong files, not as a second sandbox.
+
 ## Console accessibility
 
 The console has a skip link, visible keyboard focus, a collapsible menu and a phone layout, and its tests check that controls have names and that main views fit a 375 px screen. This is not a formal accessibility audit or a WCAG conformance claim; run your own assessment (screen readers, contrast with your brand colours) before relying on it for compliance.

@@ -199,8 +199,12 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
     workspaces = Path(settings.workspaces_dir).resolve()
     workspaces.mkdir(parents=True, exist_ok=True)
 
+    path_policy = None
+    if settings.path_policy_file:
+        from .pathpolicy import PathPolicy
+        path_policy = PathPolicy.load(settings.path_policy_file)  # a broken policy stops startup rather than being ignored
     orch = Orchestrator(Deps(
-        store=store, router=router, sandbox=sandbox, workspaces_dir=workspaces,
+        store=store, router=router, sandbox=sandbox, workspaces_dir=workspaces, paths=path_policy,
         input_guard=InputGuard(redact_pii=settings.redact_pii_in_input), output_guard=OutputGuard(),
         cache=cache, publish=bus.publish, alert=alerts,
         limits=Limits(settings.max_steps_per_turn, settings.max_cost_usd_per_turn, settings.max_handoffs_per_turn,
