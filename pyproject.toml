@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "harnis"
-version = "1.14.0"
+version = "1.15.0"
 description = "Harnis: an open-source, multi-tenant agent harness for companies: coding agents, multi-agent workflows and stateful apps with approvals, sandboxing and tenant isolation."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -53,7 +53,9 @@ dependencies = [
 
 [project.optional-dependencies]
 k8s = ["kubernetes>=31"]
-dev = ["pytest>=8", "fakeredis[lua]>=2.23", "kubernetes>=31", "build>=1.2"]
+dev = ["pytest>=8", "fakeredis[lua]>=2.23", "kubernetes>=31", "build>=1.2", "mcp>=2,<3"]
+# MCP server for IDEs and coding tools (`harnis-mcp`); the `mcp` package is MIT-licensed.
+mcp = ["mcp>=2,<3"]
 # Optional PostgreSQL driver instead of pgtern (LGPL-3.0): DB_DRIVER=psycopg.
 psycopg = ["psycopg[binary,pool]>=3.2", "opentelemetry-instrumentation-psycopg>=0.48b0"]
 # Documentation site (python tasks.py docs). MkDocs 2 drops the plugin and theme system.
@@ -67,6 +69,7 @@ Changelog = "https://github.com/karawash-projects/harnis/blob/main/CHANGELOG.md"
 
 [project.scripts]
 harnis = "harnis.cli:main"
+harnis-mcp = "harnis.mcp_server:main"
 
 [tool.setuptools.packages.find]
 include = ["harnis*"]

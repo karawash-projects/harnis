@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-11-22
+
+### Added
+- **MCP server** (`harnis-mcp`, `pip install "harnis[mcp]"`): lets Claude Code, VS Code agent mode, Cursor and other MCP clients hand tasks to Harnis. Five tools: start a task, task status, follow-up message, show changes, apply changes. It uploads the project the same way the `harnis` command does, and writes nothing locally until `harnis_apply_changes`, which refuses files you edited after you looked at the changes.
+- The MCP server has **no approve or deny tool** on purpose: approvals stay with people in the console or the `harnis` command. Use a token with only the `user` role for it.
+- New docs page "Using Harnis from IDEs and coding tools": the `harnis` command, the MCP server, setup for Claude Code and VS Code, and what Harnis does and does not control (an agent with its own model key or shell is not controlled by Harnis).
+
 ## [1.14.0] - 2026-11-22
 
 ### Added

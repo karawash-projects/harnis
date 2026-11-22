@@ -42,6 +42,8 @@ nav:
       - Operations: operations.md
       - Single sign-on with Keycloak: keycloak.md
       - gVisor sandbox: gvisor.md
+  - Use:
+      - IDEs and coding tools: ide-and-tools.md
   - Extend:
       - Plugins: plugins.md
 
