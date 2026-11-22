@@ -102,9 +102,11 @@ def test_app_role_cannot_erase_without_tenant_context_or_run_retention(pg):
     with pgdrv.connect(pg["app"]) as c:
         with pytest.raises(pgdrv.errors.RaiseException):
             c.execute("SELECT harnis_erase_user('alice', 'x')")
+        c.rollback()  # pgtern 0.4 raises on commit of a failed transaction
     with pgdrv.connect(pg["app"]) as c:
         with pytest.raises(pgdrv.errors.InsufficientPrivilege):
             c.execute("SELECT * FROM harnis_apply_retention(1, 1)")
+        c.rollback()
 
 
 def test_tenant_deletion_is_two_step_and_complete(client, tenant, ws, app_pool):
