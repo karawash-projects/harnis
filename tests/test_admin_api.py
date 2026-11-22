@@ -89,6 +89,7 @@ def test_app_role_cannot_touch_tenants_directly(pg):
     with pgdrv.connect(pg["app"]) as c:
         with pytest.raises(pgdrv.errors.InsufficientPrivilege):
             c.execute("UPDATE tenants SET active = false")
+        c.rollback()  # pgtern 0.4 raises on commit of a failed transaction
 
 
 # -- API keys ---------------------------------------------------------------------

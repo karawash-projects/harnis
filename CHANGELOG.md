@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+- Accepts pgtern 0.4 (`pgtern>=0.3,<0.5`); the suite passes on 0.3.0 and 0.4.1. pgtern 0.4 raises when a transaction that already failed is committed (0.3 rolled it back silently); Harnis itself is unaffected, and two tests that expected a failing statement now roll back explicitly.
+
 ## [1.4.0] - 2026-11-22
 
 Harness controls: limits and safety nets that act on their own, with console support.
