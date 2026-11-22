@@ -237,6 +237,10 @@ externalDatabase:
   driver: pgtern
   # Password for the harnis_app role (APP_DB_PASSWORD). Required.
   appPassword: ""
+  # Optional: password for a separate platform-administration login (harnis_platform_ops). Give the API
+  # PLATFORM_DATABASE_URL (in the API secret or secrets.extra), then enforce with
+  # `python -m harnis.migrate platform-role enforce`. See docs/operations.md.
+  platformPassword: ""
   # Owner / migration role (must be able to create roles).
   ownerUser: postgres
   ownerPassword: ""

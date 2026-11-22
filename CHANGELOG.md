@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-22
+
+### Added
+- **Separate login for platform administration** (optional). The `harnis_platform_ops` database role can run the platform functions (create, update and delete tenants, set their controls, clear a trip wire) and use the platform audit log. Set `PLATFORM_DB_PASSWORD` (migration job) and `PLATFORM_DATABASE_URL` (API), run the migrations, then `python -m harnis.migrate platform-role enforce`: from then on the application login cannot run any of those, so a flaw in tenant-facing code cannot reach them. `platform-role relax` undoes it and `platform-role status` shows the state. Nothing changes until you enforce it. Helm: `externalDatabase.platformPassword`.
+
 ## [1.11.0] - 2026-11-22
 
 ### Fixed

@@ -20,7 +20,16 @@ from . import pg
 from .config import get_settings
 
 
-def _ensure_roles(conn: pg.Connection, app_password: str) -> None:
+PLATFORM_FUNCTIONS = (
+    "harnis_admin_list_tenants()",
+    "harnis_admin_upsert_tenant(text, text, text[], numeric, boolean, text)",
+    "harnis_admin_set_tenant_controls(text, numeric, numeric, integer, boolean, text)",
+    "harnis_admin_clear_trip(text, text)",
+    "harnis_delete_tenant(text)",
+)
+
+
+def _ensure_roles(conn: pg.Connection, app_password: str, platform_password: str = "") -> None:
     exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = 'harnis_app'").fetchone()
     if exists:
         conn.execute(pg.sql.SQL("ALTER ROLE harnis_app WITH LOGIN PASSWORD {}").format(pg.sql.Literal(app_password)))
@@ -39,6 +48,12 @@ def _ensure_roles(conn: pg.Connection, app_password: str) -> None:
     if not conn.execute("SELECT 1 FROM pg_roles WHERE rolname = 'harnis_lifecycle'").fetchone():
         conn.execute("CREATE ROLE harnis_lifecycle NOLOGIN NOBYPASSRLS")
     conn.execute(pg.sql.SQL("GRANT harnis_lifecycle TO {}").format(pg.sql.Identifier(conn.info.user)))
+    # Login for platform administration. Without a password it cannot log in, which is the default.
+    if not conn.execute("SELECT 1 FROM pg_roles WHERE rolname = 'harnis_platform_ops'").fetchone():
+        conn.execute("CREATE ROLE harnis_platform_ops NOLOGIN")
+    conn.execute("ALTER ROLE harnis_platform_ops NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB")
+    if platform_password:
+        conn.execute(pg.sql.SQL("ALTER ROLE harnis_platform_ops WITH LOGIN PASSWORD {}").format(pg.sql.Literal(platform_password)))
 
 
 def apply_migrations(dsn: str | None = None, app_password: str | None = None,
@@ -50,7 +65,7 @@ def apply_migrations(dsn: str | None = None, app_password: str | None = None,
     dsn = dsn or settings.migration_database_url
     applied: list[str] = []
     with pg.connect(dsn, autocommit=True) as conn:
-        _ensure_roles(conn, app_password or settings.app_db_password)
+        _ensure_roles(conn, app_password or settings.app_db_password, settings.platform_db_password)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS schema_migrations ("
             " name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
@@ -87,10 +102,45 @@ def create_tenant(tenant_id: str, name: str, allowed_providers: list[str] | None
         )
 
 
+def set_platform_enforcement(dsn: str | None = None, enforce: bool = True) -> str:
+    """Take platform administration away from the application login (enforce) or give it back (relax).
+
+    Enforced, the application login can no longer run the platform functions or touch the platform audit
+    log, so a flaw in tenant-facing code cannot create, disable or delete tenants or lift a safety freeze:
+    only the harnis_platform_ops login can."""
+    dsn = dsn or get_settings().migration_database_url
+    with pg.connect(dsn, autocommit=True) as conn:
+        login = conn.execute("SELECT rolcanlogin FROM pg_roles WHERE rolname = 'harnis_platform_ops'").fetchone()
+        if enforce and not (login and login[0]):
+            raise RuntimeError("harnis_platform_ops has no login yet: set PLATFORM_DB_PASSWORD and run the migrations first")
+        verb, prep = ("REVOKE", "FROM") if enforce else ("GRANT", "TO")
+        for fn in PLATFORM_FUNCTIONS:
+            conn.execute(f"{verb} EXECUTE ON FUNCTION {fn} {prep} harnis_app")
+        conn.execute(f"{verb} SELECT, INSERT ON platform_audit {prep} harnis_app")
+        conn.execute(f"{verb} USAGE ON SEQUENCE platform_audit_event_id_seq {prep} harnis_app")
+    return "enforced" if enforce else "relaxed"
+
+
+def platform_enforced(dsn: str | None = None) -> bool:
+    dsn = dsn or get_settings().migration_database_url
+    with pg.connect(dsn) as conn:
+        return not conn.execute(
+            "SELECT has_function_privilege('harnis_app', 'harnis_delete_tenant(text)', 'EXECUTE')").fetchone()[0]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", choices=["demo"], help="create demo tenants")
+    sub = parser.add_subparsers(dest="cmd")
+    pr = sub.add_parser("platform-role", help="enforce, relax or show the platform login separation")
+    pr.add_argument("action", choices=["enforce", "relax", "status"])
     args = parser.parse_args()
+    if args.cmd == "platform-role":
+        if args.action == "status":
+            print("enforced" if platform_enforced() else "not enforced")
+        else:
+            print(set_platform_enforcement(enforce=args.action == "enforce"))
+        return
     applied = apply_migrations()
     print("applied:", ", ".join(applied) if applied else "nothing (up to date)")
     if args.seed == "demo":

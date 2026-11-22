@@ -51,6 +51,13 @@ spec:
                 secretKeyRef:
                   name: {{ include "harnis.migrationSecretName" . }}
                   key: APP_DB_PASSWORD
+            # Optional: gives the harnis_platform_ops role a login (separate platform administration).
+            - name: PLATFORM_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "harnis.migrationSecretName" . }}
+                  key: PLATFORM_DB_PASSWORD
+                  optional: true
           securityContext:
             {{- toYaml .Values.api.securityContext | nindent 12 }}
           resources:
