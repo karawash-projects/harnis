@@ -47,6 +47,9 @@ tracer = trace.get_tracer("harnis.orchestrator")
 END = "END"
 SUSPEND = "SUSPEND"
 
+TRUNCATED_NUDGE = ("Your last response was cut off by the output limit, and any tool call in it was "
+                   "discarded. Continue from where you stopped, in smaller steps (for a large file, "
+                   "write it in parts).")
 CONTINUE_NUDGE = ("Continue: carry out the step you just described now, using the tools. Reply without a "
                   "tool call only when the whole task is complete, with a short summary of what you did.")
 # The tail of a reply that announces work instead of finishing it.
@@ -112,6 +115,8 @@ class Limits:
     auto_continue_max: int = 2
     reroute_from_support: bool = True
     max_turn_seconds: int = 0
+    max_output_tokens: int = 4096
+    truncation_retries: int = 2
     history_max_chars: int = 120_000
     require_tests: bool = False
     verify_max_nudges: int = 2
@@ -324,6 +329,18 @@ class Orchestrator:
             self.d.alert(reason, rec.tenant_id, rec.session_id, {"status": status})
         return END
 
+    def abandon_awaiting(self, rec: SessionRecord, reason: str) -> SessionRecord:
+        """Release a session that is waiting for an approval nobody decided in time. The
+        action is not run; the session is free for a new message."""
+        st = rec.state
+        self._close_pending(st, reason)
+        st["awaiting"], st["approval_decision"] = None, None
+        st["reply"] = f"The approval request expired, so the action was not run ({reason})."
+        st.setdefault("flags", []).append("approval_expired")
+        rec.status = "failed"
+        self.d.store.audit(rec.tenant_id, rec.session_id, "harnis", "approval_expired", {})
+        return rec
+
     def _close_pending(self, st: dict[str, Any], reason: str) -> None:
         if st.get("pending_tool_calls"):
             done = {r["tool_use_id"] for r in st["tool_results"]}
@@ -428,22 +445,39 @@ class Orchestrator:
             if "history_compacted" not in st["flags"]:
                 st["flags"].append("history_compacted")
                 self.d.store.audit(rec.tenant_id, rec.session_id, "harnis", "history_compacted", {})
-        req = LLMRequest(system=system, messages=clean_history(st["messages"]), tools=tools)
+        req = LLMRequest(system=system, messages=clean_history(st["messages"]), tools=tools,
+                         max_tokens=self.d.limits.max_output_tokens)
         resp = self._call_llm(rec, req)
         if resp is None:
             return END
         content = [b for b in (resp.content or []) if not _empty_text(b)]
+        truncated = resp.stop_reason == "max_tokens"
+        tool_calls = resp.tool_calls
+        if truncated and tool_calls:
+            # A tool call cut off by the output limit has incomplete arguments: never run it.
+            content = [b for b in content if b.get("type") != "tool_use"]
+            tool_calls = []
         if not content:  # providers reject an empty text block, so never store one
             content = [{"type": "text", "text": EMPTY_REPLY}]
         st["messages"].append(Message("assistant", content).to_dict())
-        if resp.tool_calls:
-            st["pending_tool_calls"] = resp.tool_calls
+        if tool_calls:
+            st["pending_tool_calls"] = tool_calls
             st["tool_results"] = []
         if st["turn"]["cost_usd"] > self._cost_limit(rec):
             return self._halt(rec, "failed", "cost_budget_exceeded",
                               f"Stopped: this turn exceeded its ${self._cost_limit(rec):.2f} budget.")
-        if resp.tool_calls:
+        if tool_calls:
             return "tools"
+        if truncated:
+            turn = st["turn"]
+            if turn.get("truncations", 0) < self.d.limits.truncation_retries:
+                turn["truncations"] = turn.get("truncations", 0) + 1
+                st["flags"].append("output_truncated")
+                st["messages"].append(Message("user", [{"type": "text", "text": TRUNCATED_NUDGE}]).to_dict())
+                return "agent"
+            st["flags"].append("output_truncated")
+            st["reply"] = (resp.text or EMPTY_REPLY) + "\n\n[This answer was cut off at the output limit.]"
+            return "respond"
         if (self.d.registry.agent(st["agent"]).auto_continue and resp.stop_reason == "end_turn"
                 and looks_unfinished(resp.text)
                 and st["turn"].get("continues", 0) < self.d.limits.auto_continue_max):

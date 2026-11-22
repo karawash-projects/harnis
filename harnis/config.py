@@ -139,6 +139,7 @@ class Settings(BaseSettings):
     max_cost_usd_per_turn: float = 2.00
     max_handoffs_per_turn: int = 6
     max_tool_calls_per_turn: int = 20
+    max_output_tokens: int = 4096  # per model call; a reply cut off at this size is continued, not delivered as complete
     max_turn_seconds: int = 0  # wall-clock limit per turn, excluding time waiting for approval; 0 = off
     history_max_chars: int = 120_000  # older tool output is trimmed beyond this; 0 = never compact
     require_tests: bool = False  # a coding turn that changed files must end with passing tests

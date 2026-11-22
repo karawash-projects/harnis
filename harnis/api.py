@@ -179,7 +179,7 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
         limits=Limits(settings.max_steps_per_turn, settings.max_cost_usd_per_turn, settings.max_handoffs_per_turn,
                       settings.max_tool_calls_per_turn, settings.loop_window, settings.loop_repeat_threshold,
                       settings.auto_continue_max, settings.reroute_from_support,
-                      max_turn_seconds=settings.max_turn_seconds, history_max_chars=settings.history_max_chars,
+                      max_turn_seconds=settings.max_turn_seconds, max_output_tokens=settings.max_output_tokens, history_max_chars=settings.history_max_chars,
                       require_tests=settings.require_tests, trip_min_turns=settings.trip_min_turns,
                       trip_failure_ratio=settings.trip_failure_ratio,
                       trip_window_minutes=settings.trip_window_minutes),
@@ -399,6 +399,12 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
             if not acquired:
                 raise HTTPException(409, "another turn is already running for this session")
             rec = load_owned(p, session_id)  # re-read under the lock
+            awaiting = rec.state.get("awaiting") or {}
+            if rec.status == "awaiting_approval" and awaiting.get("approval_id") \
+                    and store.expire_approval(rec.tenant_id, awaiting["approval_id"]):
+                # Nobody decided in time: release the session instead of leaving it stuck.
+                orch.abandon_awaiting(rec, "no reviewer decided in time")
+                rec.version = store.save_checkpoint(rec)
             try:
                 if settings.turn_execution != "queue":
                     return orch.start_turn(rec, body.message), False

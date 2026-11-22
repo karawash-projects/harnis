@@ -68,6 +68,9 @@ class MemoryStore:
     def get_prompt(self, tenant_id, key):
         return self.prompts.get((tenant_id, key))
 
+    def expire_approval(self, tenant_id, approval_id):
+        return bool(self.approvals.get(approval_id, {}).get("expired"))
+
     def tenant_policy(self, tenant_id):
         return self.policy
 
