@@ -761,6 +761,66 @@
       if (rows.length) usageCard.append(h("div", { class: "conv-head" }, h("span", { class: "spacer" }), h("strong", { text: "Total " + money(total) })));
     } catch (e) { usageCard.append(errorBox(e)); }
 
+    const days = h("select", { id: "reportDays", "aria-label": "Report period" },
+      ...[[7, "7 days"], [30, "30 days"], [90, "90 days"]].map(([v, t]) => h("option", { value: String(v), text: t, selected: v === 30 })));
+    const reports = h("div", { class: "stack", id: "reports" });
+    if (has("reviewer")) {
+      const bar = h("div", { class: "row" }, h("h2", { text: "Reports" }), h("span", { class: "spacer" }),
+        h("label", { class: "muted small", for: "reportDays", text: "Period" }), days);
+      bar.style.setProperty("margin-top", "16px");
+      root.append(bar);
+      root.append(reports);
+      days.addEventListener("change", loadReports);
+      loadReports();
+    }
+    async function loadReports() {
+      reports.replaceChildren();
+      const d = days.value;
+      if (has("admin")) {
+        const card = h("div", { class: "card", id: "spendCard" }, h("div", { class: "conv-head" }, h("h2", { text: "Spend by user and agent" })));
+        reports.append(card);
+        try {
+          const r = await api("GET", `/v1/admin/spend?days=${d}`);
+          card.append(h("p", { class: "muted small", text: "Agents are counted by the one a conversation ended on. Calls from conversations that have since been erased or expired are grouped together." }));
+          card.append(table([
+            { label: "User", render: (x) => h("span", { class: "mono", text: x.name }) },
+            { label: "Conversations", num: true, render: (x) => num(x.sessions) },
+            { label: "Calls", num: true, render: (x) => num(x.calls) },
+            { label: "Tokens", num: true, render: (x) => num(Number(x.input_tokens) + Number(x.output_tokens)) },
+            { label: "Cost", num: true, render: (x) => money(x.cost_usd) },
+          ], r.by_user, "No spend in this period."));
+          card.append(table([
+            { label: "Agent", render: (x) => h("span", { class: "mono", text: x.name }) },
+            { label: "Conversations", num: true, render: (x) => num(x.sessions) },
+            { label: "Calls", num: true, render: (x) => num(x.calls) },
+            { label: "Tokens", num: true, render: (x) => num(Number(x.input_tokens) + Number(x.output_tokens)) },
+            { label: "Cost", num: true, render: (x) => money(x.cost_usd) },
+          ], r.by_agent, ""));
+          if (r.by_user.length) card.append(h("div", { class: "conv-head" }, h("span", { class: "spacer" }), h("strong", { text: "Total " + money(r.total_usd) })));
+        } catch (e) { card.append(errorBox(e)); }
+      }
+      const ac = h("div", { class: "card", id: "approvalStats" }, h("div", { class: "conv-head" }, h("h2", { text: "Approvals" })));
+      reports.append(ac);
+      try {
+        const a = await api("GET", `/v1/approval-stats?days=${d}`);
+        const dur = (sec) => sec == null ? "n/a" : sec < 90 ? Math.round(sec) + " s" : sec < 5400 ? Math.round(sec / 60) + " min" : (sec / 3600).toFixed(1) + " h";
+        ac.append(table([{ label: "Measure", key: "m" }, { label: "Value", key: "v" }], [
+          { m: "Requests", v: String(a.total) },
+          { m: "Approved / denied", v: `${a.approved} / ${a.denied}` },
+          { m: "Approval rate (of decided)", v: a.approval_rate_pct == null ? "n/a" : a.approval_rate_pct + "%" },
+          { m: "Expired without a decision", v: a.total ? `${a.expired} (${a.expired_pct}%)` : "0" },
+          { m: "Still waiting", v: String(a.pending) },
+          { m: "Median time to decide", v: dur(a.median_decision_s) },
+          { m: "90th percentile", v: dur(a.p90_decision_s) },
+        ], ""));
+        if (a.by_tool.length) ac.append(table([
+          { label: "Tool", render: (x) => h("span", { class: "mono", text: x.tool }) },
+          { label: "Approved", num: true, key: "approved" }, { label: "Denied", num: true, key: "denied" },
+          { label: "Expired", num: true, key: "expired" }, { label: "Waiting", num: true, key: "pending" },
+        ], a.by_tool, ""));
+      } catch (e) { ac.append(errorBox(e)); }
+    }
+
     if (has("admin")) {
       const card = h("div", { class: "card", id: "pricingCard" }, h("div", { class: "conv-head" }, h("h2", { text: "Model prices" }),
         h("span", { class: "muted small", text: "USD per million tokens; used for costs and budgets" })));
@@ -976,19 +1036,31 @@
   // ---------------------------------------------------------------------------
   function viewAudit(root) {
     const filter = h("input", { type: "text", id: "auditFilter", placeholder: "event type, e.g. approval_decided" });
+    const who = h("input", { type: "text", id: "auditUser", placeholder: "user, as shown under Actor" });
+    const from = h("input", { type: "date", id: "auditFrom", "aria-label": "From date" });
+    const to = h("input", { type: "date", id: "auditTo", "aria-label": "To date (inclusive)" });
     const tbody = h("tbody", {});
     const more = h("button", { class: "btn secondary sm hidden", onclick: () => load(false) }, "Load more");
     let after = 0;
     root.append(pageHead("Audit log", "Security-relevant events in this tenant, oldest first. Append-only.",
       h("button", { class: "btn secondary sm", id: "downloadAudit", onclick: download }, "Download NDJSON")));
     root.append(h("form", { class: "row", onsubmit: (ev) => { ev.preventDefault(); load(true); } },
-      h("div", { class: "spacer" }, filter), h("button", { class: "btn sm", type: "submit" }, "Filter")));
+      h("div", { class: "spacer" }, filter), h("div", { class: "spacer" }, who),
+      h("label", { class: "muted small", text: "From" }), from, h("label", { class: "muted small", text: "To" }), to,
+      h("button", { class: "btn sm", type: "submit" }, "Filter")));
     const card = h("div", { class: "card table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, ...["#", "Time", "Actor", "Event", "Session", "Detail"].map((t) => h("th", { text: t })))), tbody));
     card.style.setProperty("margin-top", "12px");
     root.append(card, h("div", { class: "row" }, more));
 
-    const q = () => (filter.value.trim() ? "&event_type=" + encodeURIComponent(filter.value.trim()) : "");
+    const q = () => {
+      let out = "";
+      if (filter.value.trim()) out += "&event_type=" + encodeURIComponent(filter.value.trim());
+      if (who.value.trim()) out += "&actor=" + encodeURIComponent(who.value.trim());
+      if (from.value) out += "&since=" + encodeURIComponent(new Date(from.value + "T00:00:00").toISOString());
+      if (to.value) { const d = new Date(to.value + "T00:00:00"); d.setDate(d.getDate() + 1); out += "&until=" + encodeURIComponent(d.toISOString()); }
+      return out;
+    };
     async function load(reset) {
       if (reset) { after = 0; tbody.replaceChildren(); }
       try {

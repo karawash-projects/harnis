@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-22
+
+### Added
+- **Manager views** on Usage & analytics: spend by user and by agent (admins), and approval statistics (reviewers): approved, denied and expired counts, approval rate, median and 90th-percentile time to decide, and a per-tool breakdown. Period: 7, 30 or 90 days.
+- `GET /v1/admin/spend?days=` and `GET /v1/approval-stats?days=`. Spend is attributed through the conversation: its owner, and the agent it ended on. Calls from conversations since erased or expired are grouped as "(erased or expired)".
+- **Audit log filters** by user (`actor`) and date range (`since` inclusive, `until` exclusive, ISO 8601) on `GET /v1/admin/audit`, in the console, and in NDJSON export. Decision times are aggregates only; there is no per-reviewer ranking.
+
 ## [1.8.0] - 2026-11-22
 
 ### Added

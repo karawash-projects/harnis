@@ -499,3 +499,34 @@ def test_plain_users_land_on_start_and_begin_with_a_chosen_agent(page, tmp_path,
         page.click('[data-start="coder"]')
         expect(page.locator(".conv-head .pill", has_text="agent: coder")).to_be_visible()
         assert "#/chat/" in page.url
+
+
+def test_manager_reports_and_audit_filters(page, tmp_path, app_pool, redis_client):
+    expect = sync_api.expect
+    with serve(harnis_app(tmp_path, app_pool, redis_client)) as url:
+        page.goto(url + "/")
+        page.click("#devToken")
+        page.click("#newSession")
+        page.fill("#messageInput", "create calc.py")
+        page.click("#sendBtn")
+        expect(page.locator(".approval").first).to_contain_text("write_file")
+
+        page.click('.nav a[href="#/activity"]')
+        expect(page.locator("#spendCard")).to_contain_text("Spend by user and agent")
+        expect(page.locator("#approvalStats")).to_contain_text("Median time to decide")
+        expect(page.locator("#approvalStats")).to_contain_text("Approval rate")
+        page.select_option("#reportDays", "7")
+        expect(page.locator("#approvalStats")).to_contain_text("Requests")
+
+        page.click('.nav a[href="#/audit"]')
+        page.fill("#auditUser", "no-such-person")
+        page.click("form button[type=submit]")
+        expect(page.locator("tbody")).to_contain_text("No events")
+        page.fill("#auditUser", "")
+        page.fill("#auditFrom", "2000-01-01")
+        page.fill("#auditTo", "2999-12-31")
+        page.click("form button[type=submit]")
+        expect(page.locator("tbody tr").first).not_to_contain_text("No events")
+        page.fill("#auditFrom", "2999-01-01")
+        page.click("form button[type=submit]")
+        expect(page.locator("tbody")).to_contain_text("No events")

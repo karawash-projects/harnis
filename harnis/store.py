@@ -215,6 +215,56 @@ class PgStore:
                                 " FROM tenant_usage_by_model ORDER BY cost_usd DESC").fetchall()
         return [{**r, "cost_usd": float(r["cost_usd"])} for r in rows]
 
+    def spend_breakdown(self, tenant_id: str, days: int = 30) -> dict[str, Any]:
+        """Ledger spend by user and by agent. Both come from the conversation the call belonged to
+        (its owner and the agent it ended on), so calls of deleted conversations are grouped apart."""
+        gone = "(erased or expired)"
+        out: dict[str, Any] = {"window_days": days}
+        with self._tx(tenant_id) as conn:
+            for key, expr in (("by_user", f"coalesce(s.user_id, '{gone}')"),
+                              ("by_agent", f"CASE WHEN s.session_id IS NULL THEN '{gone}' ELSE coalesce(s.state->>'agent', '(not routed)') END")):
+                rows = conn.execute(
+                    f"SELECT {expr} AS name, count(DISTINCT l.session_id) AS sessions, count(*) AS calls,"
+                    " coalesce(sum(l.input_tokens), 0) AS input_tokens, coalesce(sum(l.output_tokens), 0) AS output_tokens,"
+                    " coalesce(sum(l.cost_usd), 0) AS cost_usd"
+                    " FROM token_ledger l LEFT JOIN sessions s ON s.session_id = l.session_id"
+                    " WHERE l.logged_at >= now() - make_interval(days => %s)"
+                    " GROUP BY 1 ORDER BY sum(l.cost_usd) DESC, 1 LIMIT 200", (days,)).fetchall()
+                out[key] = [{**r, "cost_usd": float(r["cost_usd"])} for r in rows]
+        out["total_usd"] = round(sum(r["cost_usd"] for r in out["by_user"]), 6)
+        return out
+
+    def approval_stats(self, tenant_id: str, days: int = 30) -> dict[str, Any]:
+        """How approvals went: rates, and how long reviewers took (in aggregate, not per person)."""
+        eff = "CASE WHEN status = 'pending' AND expires_at <= now() THEN 'expired' ELSE status END"
+        with self._tx(tenant_id) as conn:
+            by_status = {r["st"]: int(r["n"]) for r in conn.execute(
+                f"SELECT {eff} AS st, count(*) AS n FROM approvals"
+                " WHERE requested_at >= now() - make_interval(days => %s) GROUP BY 1", (days,)).fetchall()}
+            t = conn.execute(
+                "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM decided_at - requested_at)) AS median_s,"
+                " percentile_cont(0.9) WITHIN GROUP (ORDER BY extract(epoch FROM decided_at - requested_at)) AS p90_s"
+                " FROM approvals WHERE status IN ('approved', 'denied') AND decided_at IS NOT NULL"
+                " AND requested_at >= now() - make_interval(days => %s)", (days,)).fetchone()
+            tools: dict[str, dict[str, int]] = {}
+            for r in conn.execute(
+                    f"SELECT action->>'tool' AS tool, {eff} AS st, count(*) AS n FROM approvals"
+                    " WHERE requested_at >= now() - make_interval(days => %s) GROUP BY 1, 2", (days,)).fetchall():
+                tools.setdefault(r["tool"], {})[r["st"]] = int(r["n"])
+        approved, denied = by_status.get("approved", 0), by_status.get("denied", 0)
+        total = sum(by_status.values())
+        return {
+            "window_days": days, "total": total, "approved": approved, "denied": denied,
+            "expired": by_status.get("expired", 0), "pending": by_status.get("pending", 0),
+            "approval_rate_pct": round(100 * approved / (approved + denied), 1) if approved + denied else None,
+            "expired_pct": round(100 * by_status.get("expired", 0) / total, 1) if total else None,
+            "median_decision_s": round(float(t["median_s"]), 1) if t and t["median_s"] is not None else None,
+            "p90_decision_s": round(float(t["p90_s"]), 1) if t and t["p90_s"] is not None else None,
+            "by_tool": [{"tool": k, "approved": v.get("approved", 0), "denied": v.get("denied", 0),
+                         "expired": v.get("expired", 0), "pending": v.get("pending", 0)}
+                        for k, v in sorted(tools.items())],
+        }
+
     def analytics_hourly(self, tenant_id: str, hours: int = 24) -> list[dict[str, Any]]:
         with self._tx(tenant_id) as conn:
             rows = conn.execute("SELECT hour, runs, avg_latency_ms, cache_hit_pct, success_pct, halted"
@@ -389,13 +439,23 @@ class PgStore:
 
     # -- audit export --------------------------------------------------------------
     def audit_events(self, tenant_id: str, after_id: int = 0, limit: int = 500,
-                     event_type: str | None = None) -> list[dict[str, Any]]:
+                     event_type: str | None = None, actor: str | None = None,
+                     since: Any = None, until: Any = None) -> list[dict[str, Any]]:
         q = ("SELECT event_id, session_id, actor, event_type, detail, created_at FROM audit_log"
              " WHERE event_id > %s")
         args: list[Any] = [after_id]
         if event_type:
             q += " AND event_type = %s"
             args.append(event_type)
+        if actor:
+            q += " AND actor = %s"
+            args.append(actor)
+        if since is not None:
+            q += " AND created_at >= %s"
+            args.append(since)
+        if until is not None:
+            q += " AND created_at < %s"
+            args.append(until)
         q += " ORDER BY event_id LIMIT %s"
         args.append(limit)
         with self._tx(tenant_id) as conn:
