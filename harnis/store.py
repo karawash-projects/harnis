@@ -218,10 +218,71 @@ class PgStore:
         if cached and cached[0] > time.time():
             return cached[1]
         with self._tx(tenant_id) as conn:
-            row = conn.execute("SELECT allowed_providers, max_cost_usd_per_turn, active FROM tenants").fetchone()
+            row = conn.execute(
+                "SELECT allowed_providers, max_cost_usd_per_turn, active, max_cost_usd_per_day,"
+                " max_cost_usd_per_month, max_turn_seconds, require_tests, writes_frozen FROM tenants").fetchone()
         policy = dict(row) if row else {"allowed_providers": [], "max_cost_usd_per_turn": None, "active": False}
+        for k in ("max_cost_usd_per_turn", "max_cost_usd_per_day", "max_cost_usd_per_month"):
+            if policy.get(k) is not None:
+                policy[k] = float(policy[k])
         self._policy_cache[tenant_id] = (time.time() + 30, policy)
         return policy
+
+    def spend_since(self, tenant_id: str, days: int | None = None, month: bool = False) -> float:
+        """USD in the token ledger for the tenant: the last `days` days, or this calendar month."""
+        with self._tx(tenant_id) as conn:
+            if month:
+                row = conn.execute("SELECT coalesce(sum(cost_usd), 0) AS c FROM token_ledger"
+                                   " WHERE logged_at >= date_trunc('month', now())").fetchone()
+            else:
+                row = conn.execute("SELECT coalesce(sum(cost_usd), 0) AS c FROM token_ledger"
+                                   " WHERE logged_at >= now() - make_interval(days => %s)",
+                                   (days or 1,)).fetchone()
+        return float(row["c"])
+
+    def trip_tenant(self, tenant_id: str, reason: str, pause: bool = False) -> None:
+        with self._tx(tenant_id) as conn:
+            conn.execute("SELECT harnis_trip_tenant(%s::text, %s::text, %s::boolean)", (tenant_id, reason, pause))
+        self._policy_cache.pop(tenant_id, None)
+
+    def recent_outcomes(self, tenant_id: str, minutes: int = 60) -> dict[str, int]:
+        with self._tx(tenant_id) as conn:
+            rows = conn.execute("SELECT outcome, count(*) AS n FROM run_metrics"
+                                " WHERE recorded_at >= now() - make_interval(mins => %s) GROUP BY outcome",
+                                (minutes,)).fetchall()
+        return {r["outcome"]: int(r["n"]) for r in rows}
+
+    def scorecard(self, tenant_id: str, hours: int = 24) -> dict[str, Any]:
+        """Health of the harness for one tenant: outcomes, safety events, spend against caps."""
+        pol = self.tenant_policy(tenant_id)
+        with self._tx(tenant_id) as conn:
+            outcomes = {r["outcome"]: int(r["n"]) for r in conn.execute(
+                "SELECT outcome, count(*) AS n FROM run_metrics WHERE recorded_at >= now() - make_interval(hours => %s)"
+                " GROUP BY outcome", (hours,)).fetchall()}
+            events = {r["event_type"]: int(r["n"]) for r in conn.execute(
+                "SELECT event_type, count(*) AS n FROM audit_log WHERE created_at >= now() - make_interval(hours => %s)"
+                " AND event_type = ANY(%s) GROUP BY event_type",
+                (hours, ["loop_detected", "input_blocked", "tool_output_injection_suspected", "approval_stale",
+                         "trip_wire", "tests_failing", "history_compacted", "spend_cap_reached",
+                         "internal_error", "escalated_by_agent", "injection_before_write",
+                         "time_budget_exceeded", "cost_budget_exceeded"]) ).fetchall()}
+            pending = conn.execute("SELECT count(*) AS n FROM approvals WHERE status = 'pending'").fetchone()["n"]
+            tripped = conn.execute("SELECT writes_frozen, tripped_reason, tripped_at, active FROM tenants").fetchone()
+        total = sum(outcomes.values())
+        bad = outcomes.get("failed", 0) + outcomes.get("escalated", 0)
+        return {
+            "window_hours": hours, "turns": total, "outcomes": outcomes,
+            "success_pct": round(100 * outcomes.get("completed", 0) / total, 1) if total else None,
+            "failure_pct": round(100 * bad / total, 1) if total else None,
+            "safety_events": events, "pending_approvals": int(pending),
+            "spend": {"today_usd": self.spend_since(tenant_id, days=1), "month_usd": self.spend_since(tenant_id, month=True),
+                      "max_per_day": pol.get("max_cost_usd_per_day"), "max_per_month": pol.get("max_cost_usd_per_month")},
+            "controls": {"max_turn_seconds": pol.get("max_turn_seconds"), "require_tests": bool(pol.get("require_tests"))},
+            "trip": {"writes_frozen": bool(tripped and tripped["writes_frozen"]) if tripped else False,
+                     "reason": tripped["tripped_reason"] if tripped else None,
+                     "at": tripped["tripped_at"] if tripped else None,
+                     "paused": bool(tripped and not tripped["active"]) if tripped else False},
+        }
 
     def tenant_exists(self, tenant_id: str) -> bool:
         with self._tx(tenant_id) as conn:
@@ -274,8 +335,23 @@ class PgStore:
     def admin_list_tenants(self) -> list[dict[str, Any]]:
         with self._platform() as conn:
             rows = conn.execute("SELECT * FROM harnis_admin_list_tenants()").fetchall()
-        return [{**r, "max_cost_usd_per_turn": float(r["max_cost_usd_per_turn"])
-                 if r["max_cost_usd_per_turn"] is not None else None} for r in rows]
+        keys = ("max_cost_usd_per_turn", "max_cost_usd_per_day", "max_cost_usd_per_month")
+        return [{**r, **{k: float(r[k]) if r[k] is not None else None for k in keys}} for r in rows]
+
+    def admin_set_tenant_controls(self, tenant_id: str, max_day: float | None, max_month: float | None,
+                                  max_seconds: int | None, require_tests: bool | None, actor: str) -> None:
+        with self._platform() as conn:
+            conn.execute("SELECT harnis_admin_set_tenant_controls(%s::text, %s::numeric, %s::numeric,"
+                         " %s::integer, %s::boolean, %s::text)",
+                         (tenant_id, max_day, max_month, max_seconds, require_tests, actor))
+            conn.commit()
+        self._policy_cache.pop(tenant_id, None)
+
+    def admin_clear_trip(self, tenant_id: str, actor: str) -> None:
+        with self._platform() as conn:
+            conn.execute("SELECT harnis_admin_clear_trip(%s::text, %s::text)", (tenant_id, actor))
+            conn.commit()
+        self._policy_cache.pop(tenant_id, None)
 
     def admin_upsert_tenant(self, tenant_id: str, name: str | None, allowed_providers: list[str] | None,
                             max_cost: float | None, active: bool | None, actor: str) -> None:

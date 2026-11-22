@@ -125,6 +125,21 @@ Suggested alerts (adapt thresholds to your traffic):
 
 Harnis also sends its own alerts (halted turns, open circuit breakers, slow spans) to `ALERT_WEBHOOK_URL`.
 
+## Harness controls (1.4.0)
+
+Limits that act without a person watching. All are set per tenant by a platform admin (Tenants page or `PUT /v1/admin/tenants/{id}`); an omitted field is kept, `0` removes a limit.
+
+| Control | What it does |
+|---|---|
+| `max_cost_usd_per_day`, `max_cost_usd_per_month` | New turns are rejected once the tenant's ledger spend (last 24 h, calendar month) reaches the cap. A turn already running finishes under its per-turn cap. |
+| `max_turn_seconds` | Stops a turn that has worked this long. Time spent waiting for an approval does not count. Platform default `MAX_TURN_SECONDS`. |
+| `require_tests` | A coding turn that changed files must end with `run_tests` passing; otherwise it is escalated (`tests_failing`) rather than reported as done. |
+| History compaction (`HISTORY_MAX_CHARS`) | Keeps long coding sessions inside the model's context by trimming old tool output. |
+
+**Trip wires.** When an agent repeats the same action twice, when most recent turns fail (`TRIP_FAILURE_RATIO` over `TRIP_MIN_TURNS` turns in `TRIP_WINDOW_MINUTES`), or when content an agent read looked like an instruction and it then asked to change something, the tenant's writes are frozen: reading, tests and chat continue, but `write_file`, `run_command` and `install_dependencies` are refused. An alert is sent and the event is in the audit log. A platform admin lifts it with "Clear trip" on the Tenants page or `POST /v1/admin/tenants/{id}/clear-trip`. Detection of injected instructions is heuristic: it reduces risk and is not a guarantee.
+
+**Scorecard.** `GET /v1/scorecard` (reviewer) and the Usage & analytics page show outcomes, safety events, pending approvals, spend against caps and any active trip wire.
+
 ## Turn workers (queue mode)
 
 By default the API runs each turn inside the HTTP request: simple, and fine for small deployments, but a long turn (model retries, a slow sandbox) holds a worker thread and an ingress connection for its whole duration, and all of them compete with `/ready` and the other endpoints. With `TURN_EXECUTION=queue` the API only records the turn; `python -m harnis.worker` (the chart's `worker.enabled=true`) runs it.

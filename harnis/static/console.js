@@ -670,6 +670,32 @@
     }
 
     if (has("reviewer")) {
+      const sc = h("div", { class: "card", id: "scorecard" }, h("div", { class: "conv-head" }, h("h2", { text: "Health scorecard" }),
+        h("span", { class: "muted small", text: "last 24 hours" })));
+      sc.style.setProperty("margin-top", "16px");
+      root.append(sc);
+      try {
+        const d = await api("GET", "/v1/scorecard");
+        if (d.trip.writes_frozen || d.trip.paused) {
+          sc.append(h("div", { class: "notice error", id: "tripNotice", text: `Safety trip wire: ${d.trip.paused ? "tenant paused, " : ""}writes are frozen (${d.trip.reason || "unknown"}). An administrator must clear it.` }));
+        }
+        const cap = (used, max) => max ? `${money(used)} of ${money(max)}` : money(used) + " (no cap)";
+        const ev = d.safety_events || {};
+        const evText = Object.keys(ev).length ? Object.entries(ev).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ") : "none";
+        sc.append(table([{ label: "Measure", key: "m" }, { label: "Value", key: "v" }], [
+          { m: "Turns", v: String(d.turns) },
+          { m: "Success / failed or escalated", v: d.turns ? `${d.success_pct}% / ${d.failure_pct}%` : "no turns yet" },
+          { m: "Pending approvals", v: String(d.pending_approvals) },
+          { m: "Spend today", v: cap(d.spend.today_usd, d.spend.max_per_day) },
+          { m: "Spend this month", v: cap(d.spend.month_usd, d.spend.max_per_month) },
+          { m: "Time limit per turn", v: d.controls.max_turn_seconds ? d.controls.max_turn_seconds + " s" : "platform default" },
+          { m: "Tests required before a coding turn completes", v: d.controls.require_tests ? "yes" : "no" },
+          { m: "Safety events", v: evText },
+        ], ""));
+      } catch (e) { sc.append(errorBox(e)); }
+    }
+
+    if (has("reviewer")) {
       const card = h("div", { class: "card" }, h("div", { class: "conv-head" }, h("h2", { text: "Last 24 hours" }),
         h("span", { class: "muted small", text: "refreshed hourly by the maintenance job" })));
       card.style.setProperty("margin-top", "16px");
@@ -893,15 +919,22 @@
       const nm = h("input", { type: "text", id: "tenantName", placeholder: "Acme Corp" });
       const prov = h("input", { type: "text", id: "tenantProviders", placeholder: "* (all configured providers)" });
       const cap = h("input", { type: "number", id: "tenantCap", min: "0", step: "0.01", placeholder: "platform default" });
+      const day = h("input", { type: "number", id: "tenantDay", min: "0", step: "0.01", placeholder: "no cap" });
+      const month = h("input", { type: "number", id: "tenantMonth", min: "0", step: "0.01", placeholder: "no cap" });
+      const secs = h("input", { type: "number", id: "tenantSecs", min: "0", step: "1", placeholder: "platform default" });
+      const reqTests = h("input", { type: "checkbox", id: "tenantReqTests", checked: !!(t && t.require_tests) });
       const active = h("input", { type: "checkbox", id: "tenantActive", checked: t ? t.active : true });
-      if (t) { id.value = t.tenant_id; nm.value = t.name || ""; prov.value = (t.allowed_providers || []).join(", "); cap.value = t.max_cost_usd_per_turn ?? ""; }
+      if (t) { id.value = t.tenant_id; nm.value = t.name || ""; prov.value = (t.allowed_providers || []).join(", "); cap.value = t.max_cost_usd_per_turn ?? ""; day.value = t.max_cost_usd_per_day ?? ""; month.value = t.max_cost_usd_per_month ?? ""; secs.value = t.max_turn_seconds ?? ""; }
+      const lim = (el, cur) => el.value === "" ? (t && cur != null ? 0 : null) : Number(el.value);
       const form = h("form", { class: "card pad stack", onsubmit: async (ev) => {
         ev.preventDefault();
         const tid = id.value.trim();
         if (!tid) { toast("Enter a tenant id.", "error"); return; }
         const body = { name: nm.value.trim() || null, active: active.checked,
           allowed_providers: prov.value.trim() ? prov.value.split(",").map((s) => s.trim()).filter(Boolean) : (t ? null : ["*"]),
-          max_cost_usd_per_turn: cap.value === "" ? (t && t.max_cost_usd_per_turn != null ? 0 : null) : Number(cap.value) };
+          max_cost_usd_per_turn: cap.value === "" ? (t && t.max_cost_usd_per_turn != null ? 0 : null) : Number(cap.value),
+          max_cost_usd_per_day: lim(day, t && t.max_cost_usd_per_day), max_cost_usd_per_month: lim(month, t && t.max_cost_usd_per_month),
+          max_turn_seconds: lim(secs, t && t.max_turn_seconds), require_tests: reqTests.checked };
         try {
           await api("PUT", "/v1/admin/tenants/" + encodeURIComponent(tid), body);
           toast(`Tenant ${tid} saved.`); formBox.replaceChildren(); load();
@@ -911,6 +944,10 @@
         h("div", { class: "row" }, h("label", { class: "field spacer" }, "Tenant id", id), h("label", { class: "field spacer" }, "Name", nm)),
         h("div", { class: "row" }, h("label", { class: "field spacer" }, "Allowed model providers (comma-separated)", prov),
           h("label", { class: "field" }, "Max cost per turn (USD)", cap)),
+        h("div", { class: "row" }, h("label", { class: "field spacer" }, "Daily budget (USD)", day),
+          h("label", { class: "field spacer" }, "Monthly budget (USD)", month),
+          h("label", { class: "field spacer" }, "Time limit per turn (seconds)", secs)),
+        h("label", { class: "check" }, reqTests, "Require passing tests before a coding turn completes"),
         h("label", { class: "check" }, active, "Active"),
         h("div", { class: "row" }, h("button", { class: "btn", type: "submit", id: "saveTenant" }, "Save"),
           h("button", { class: "btn secondary", type: "button", onclick: () => formBox.replaceChildren() }, "Cancel")));
@@ -942,17 +979,20 @@
           { label: "Name", key: "name" },
           { label: "Providers", render: (r) => (r.allowed_providers || []).join(", ") },
           { label: "Max cost / turn", num: true, render: (r) => r.max_cost_usd_per_turn == null ? "default" : "$" + r.max_cost_usd_per_turn },
-          { label: "Status", render: (r) => statusPill(r.active ? "active" : "disabled") },
+          { label: "Daily / monthly", num: true, render: (r) => (r.max_cost_usd_per_day ? "$" + r.max_cost_usd_per_day : "-") + " / " + (r.max_cost_usd_per_month ? "$" + r.max_cost_usd_per_month : "-") },
+          { label: "Status", render: (r) => statusPill(r.writes_frozen ? "tripped" : (r.active ? "active" : "disabled")) },
           { label: "Created", render: (r) => fmtTime(r.created_at) },
           { label: "", render: (r) => h("div", { class: "row" },
               h("button", { class: "btn sm secondary", "data-edit": r.tenant_id, onclick: () => edit(r) }, "Edit"),
+              (r.writes_frozen || !r.active) && r.tripped_reason ? h("button", { class: "btn sm", "data-clear": r.tenant_id, title: r.tripped_reason, onclick: async () => {
+                try { await api("POST", `/v1/admin/tenants/${encodeURIComponent(r.tenant_id)}/clear-trip`); toast("Trip wire cleared."); load(); } catch (e) { toast(e.message, "error"); } } }, "Clear trip") : null,
               r.active ? null : h("button", { class: "btn sm danger", "data-delete": r.tenant_id, onclick: () => remove(r) }, "Delete...")) },
         ], rows, "No tenants."));
       } catch (e) { listBox.replaceChildren(errorBox(e)); }
     }
     load();
   }
-  STATUS_KIND.active = "ok"; STATUS_KIND.disabled = "danger"; STATUS_KIND.revoked = "danger";
+  STATUS_KIND.active = "ok"; STATUS_KIND.tripped = "danger"; STATUS_KIND.disabled = "danger"; STATUS_KIND.revoked = "danger";
   STATUS_KIND.confirmed = "ok"; STATUS_KIND.unconfirmed = "warn";
 
   // ---------------------------------------------------------------------------

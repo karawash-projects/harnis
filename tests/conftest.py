@@ -71,6 +71,21 @@ class MemoryStore:
     def tenant_policy(self, tenant_id):
         return self.policy
 
+    def spend_since(self, tenant_id, days=None, month=False):
+        return sum(u[6] for u in self.usage)
+
+    def trip_tenant(self, tenant_id, reason, pause=False):
+        self.policy["writes_frozen"] = True
+        self.policy["tripped_reason"] = reason
+        if pause:
+            self.policy["active"] = False
+
+    def recent_outcomes(self, tenant_id, minutes=60):
+        out: dict[str, int] = {}
+        for m in self.metrics:
+            out[m[4]] = out.get(m[4], 0) + 1
+        return out
+
 
 class FakeSandbox:
     def __init__(self, exit_code: int = 0, output: str = "1 passed"):

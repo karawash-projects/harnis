@@ -78,6 +78,11 @@ class TenantIn(BaseModel):
     # the tenant's own cap so the platform default (MAX_COST_USD_PER_TURN) applies.
     max_cost_usd_per_turn: float | None = Field(None, ge=0, le=1000)
     active: bool | None = None
+    # Harness controls. Omitted = keep; 0 = remove the limit.
+    max_cost_usd_per_day: float | None = Field(None, ge=0, le=1_000_000)
+    max_cost_usd_per_month: float | None = Field(None, ge=0, le=10_000_000)
+    max_turn_seconds: int | None = Field(None, ge=0, le=86_400)
+    require_tests: bool | None = None
 
 
 class PromptIn(BaseModel):
@@ -173,7 +178,11 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
         cache=cache, publish=bus.publish, alert=alerts,
         limits=Limits(settings.max_steps_per_turn, settings.max_cost_usd_per_turn, settings.max_handoffs_per_turn,
                       settings.max_tool_calls_per_turn, settings.loop_window, settings.loop_repeat_threshold,
-                      settings.auto_continue_max, settings.reroute_from_support),
+                      settings.auto_continue_max, settings.reroute_from_support,
+                      max_turn_seconds=settings.max_turn_seconds, history_max_chars=settings.history_max_chars,
+                      require_tests=settings.require_tests, trip_min_turns=settings.trip_min_turns,
+                      trip_failure_ratio=settings.trip_failure_ratio,
+                      trip_window_minutes=settings.trip_window_minutes),
         registry=registry))
 
     @asynccontextmanager
@@ -498,6 +507,11 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
     def analytics(p: Principal = Depends(require_role("reviewer"))) -> list[dict[str, Any]]:
         return store.analytics_hourly(p.tenant_id)
 
+    @app.get("/v1/scorecard")
+    def scorecard(hours: int = Query(24, ge=1, le=168), p: Principal = Depends(require_role("reviewer"))) -> dict[str, Any]:
+        """Harness health for the tenant: outcomes, safety events, spend against its caps, trip wires."""
+        return store.scorecard(p.tenant_id, hours)
+
     @app.post("/v1/prompts", status_code=201)
     def put_prompt(body: PromptIn, p: Principal = Depends(require_role("admin"))) -> dict[str, Any]:
         if body.key != "router" and body.key not in registry.agents:
@@ -615,6 +629,16 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
             raise HTTPException(400, f"unknown providers: {sorted(unknown)}")
         store.admin_upsert_tenant(tenant_id, body.name, body.allowed_providers, body.max_cost_usd_per_turn,
                                   body.active, p.user_id)
+        store.admin_set_tenant_controls(tenant_id, body.max_cost_usd_per_day, body.max_cost_usd_per_month,
+                                        body.max_turn_seconds, body.require_tests, p.user_id)
+        return next(t for t in store.admin_list_tenants() if t["tenant_id"] == tenant_id)
+
+    @app.post("/v1/admin/tenants/{tenant_id}/clear-trip")
+    def clear_trip(tenant_id: str, p: Principal = Depends(require_role("platform-admin"))) -> dict[str, Any]:
+        """Lift a trip wire: the tenant is active again and writes are unfrozen."""
+        if not any(t["tenant_id"] == tenant_id for t in store.admin_list_tenants()):
+            raise HTTPException(404, "tenant not found")
+        store.admin_clear_trip(tenant_id, p.user_id)
         return next(t for t in store.admin_list_tenants() if t["tenant_id"] == tenant_id)
 
     @app.delete("/v1/admin/tenants/{tenant_id}")
