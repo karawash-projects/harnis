@@ -26,7 +26,8 @@ def app_with(tmp_path, fetch=None, **kw):
 def test_local_development_offers_dev_token(tmp_path):
     with TestClient(app_with(tmp_path, env="development")) as c:
         cfg = c.get("/v1/auth/config").json()
-        assert cfg == {"auth_mode": "local", "version": cfg["version"], "dev_token": True, "oidc": None}
+        assert cfg == {"auth_mode": "local", "version": cfg["version"], "dev_token": True, "oidc": None,
+                       "brand": {"name": "Harnis", "logo": False, "accent": None, "accent_dark": None, "help_url": None}}
 
 
 def test_oidc_console_config_from_discovery(tmp_path):

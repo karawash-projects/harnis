@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-22
+
+### Added
+- **Console branding**: `CONSOLE_BRAND_NAME`, `CONSOLE_LOGO_PATH`, `CONSOLE_ACCENT`, `CONSOLE_ACCENT_DARK` and `CONSOLE_HELP_URL` set the name, logo, colour and a Help link. `/v1/auth/config` returns them (no secrets); the logo is served at `/console/logo` and passes the console's CSP unchanged.
+
+### Changed
+- **Console wording**: status labels use plain words ("Done", "Waiting for approval", "Working", "Passed to a person") instead of internal names. Scripts that read the console's text, rather than the API, need updating.
+
 ## [1.5.0] - 2026-11-22
 
 More fixes from the pre-production review (items #11, #13, #15, #20, #21, #26, #29, #30 and the 401 message).

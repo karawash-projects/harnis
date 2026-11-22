@@ -134,6 +134,8 @@ details[open] summary { margin-bottom: 10px; }
 
 /* -- shell -------------------------------------------------------------- */
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 16px; }
+.brand .logo { height: 26px; max-width: 150px; object-fit: contain; }
+.help { margin-right: 12px; font-size: 13px; }
 .brand .mark {
   width: 28px; height: 28px; border-radius: 7px; background: var(--accent); color: var(--accent-ink);
   display: grid; place-items: center; font-weight: 700; font-size: 15px;

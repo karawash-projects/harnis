@@ -175,6 +175,13 @@ config:
   # OIDC_ROLE_MAP: '{"harnis-reviewers": "reviewer", "harnis-admins": "admin", "platform-ops": "platform-admin"}'
   # OIDC_CONSOLE_CLIENT_ID: ""
   # CONSOLE_ENABLED: "true"
+  # Console branding (see docs/operations.md). The logo is a file inside the Pod:
+  # mount it with api.extraVolumes/extraVolumeMounts and point CONSOLE_LOGO_PATH at it.
+  # CONSOLE_BRAND_NAME: "Acme AI"
+  # CONSOLE_LOGO_PATH: "/branding/logo.svg"
+  # CONSOLE_ACCENT: "#1f5c4f"
+  # CONSOLE_ACCENT_DARK: "#7cc0aa"
+  # CONSOLE_HELP_URL: "https://it.example.com/help"
 
 # -----------------------------------------------------------------------------
 # Secrets

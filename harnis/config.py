@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     oidc_console_extra_params: dict[str, str] = Field(default_factory=dict)   # JSON, e.g. {"audience": "harnis-api"}
     # Serve the web console at "/". Disable when you only expose the API.
     console_enabled: bool = True
+    # Console branding: shown to every tenant of this deployment. The logo is a local file
+    # (PNG, JPEG, WebP or SVG, at most 256 KB) that the API serves itself.
+    console_brand_name: str = Field("Harnis", max_length=40)
+    console_logo_path: str = ""
+    console_accent: str = ""        # "#rrggbb"; "" keeps the default colour
+    console_accent_dark: str = ""   # optional, for dark mode (a lighter shade reads better)
+    console_help_url: str = ""      # shown as a "Help" link in the console (https://...)
     # Prometheus metrics at /metrics. Set METRICS_TOKEN to require a bearer token,
     # or keep /metrics off the public ingress (the Helm chart's ingress only routes the API).
     metrics_enabled: bool = True
@@ -272,6 +279,21 @@ class Settings(BaseSettings):
     @property
     def provider_chain(self) -> list[str]:
         return [p.strip() for p in self.llm_providers.split(",") if p.strip()]
+
+    @model_validator(mode="after")
+    def _check_console_branding(self) -> "Settings":
+        import re
+        self.console_brand_name = self.console_brand_name.strip() or "Harnis"
+        for name in ("console_accent", "console_accent_dark"):
+            v = getattr(self, name).strip()
+            if v and not re.fullmatch(r"#[0-9a-fA-F]{6}", v):
+                raise ValueError(f"{name.upper()} must look like #1f5c4f")
+            setattr(self, name, v)
+        url = self.console_help_url.strip()
+        if url and not url.lower().startswith(("https://", "http://", "mailto:")):
+            raise ValueError("CONSOLE_HELP_URL must start with https://, http:// or mailto:")
+        self.console_help_url = url
+        return self
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_in_production(self) -> "Settings":
