@@ -66,6 +66,8 @@ class AgentSpec:
                  (only safe when the answer doesn't depend on files or context)
     auto_continue  nudge the model when it announces a step without taking it
     default      fallback when routing fails or returns an unknown agent
+    title, summary  what the console's "Start" page shows to staff (plain words; the
+                 summary falls back to the description, the title to the name)
     """
     name: str
     description: str
@@ -75,6 +77,8 @@ class AgentSpec:
     cacheable: bool = False
     auto_continue: bool = False
     default: bool = False
+    title: str = ""
+    summary: str = ""
 
     def __post_init__(self) -> None:
         if not _NAME.match(self.name):
@@ -242,10 +246,14 @@ def register_builtins(r: Registry) -> None:
         prompt=CODER_PROMPT,
         tools=["list_files", "read_file", "write_file", "run_tests", "run_command", "install_dependencies",
                *CONTROL_TOOLS],
-        sticky=True, auto_continue=True))
+        sticky=True, auto_continue=True, title="Coding assistant",
+        summary="Writes and changes code in a private workspace, runs tests and installs dependencies. "
+                "You see every change before it is made."))
     r.add_agent(AgentSpec(
         name="support", description="general questions: product, billing, accounts, how-to",
-        prompt=SUPPORT_PROMPT, tools=list(CONTROL_TOOLS), sticky=False, cacheable=True, default=True))
+        prompt=SUPPORT_PROMPT, tools=list(CONTROL_TOOLS), sticky=False, cacheable=True, default=True,
+        title="General help", summary="Answers questions about the product, billing, accounts and how-to. "
+                                      "It never changes anything."))
     _builtin_providers(r)
 
 

@@ -385,7 +385,8 @@ class Orchestrator:
         previous = st["agent"]
         if previous not in reg.agents and previous is not None:
             previous = None  # agent removed from configuration since the last turn
-        if previous is None or (not reg.agent(previous).sticky and self.d.limits.reroute_from_support):
+        pinned = bool(st.get("pinned_agent")) and previous is not None  # chosen by the user: no re-routing
+        if previous is None or (not pinned and not reg.agent(previous).sticky and self.d.limits.reroute_from_support):
             req = LLMRequest(
                 system=self._prompt(rec, "router")[0],
                 messages=[Message("user", [{"type": "text", "text": st["turn"]["clean_input"]}])],

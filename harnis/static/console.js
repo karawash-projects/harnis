@@ -368,6 +368,7 @@
   // Shell and routing
   // ---------------------------------------------------------------------------
   const VIEWS = [
+    { id: "start", label: "Start", section: "Work", allowed: () => has("user"), render: viewStart },
     { id: "chat", label: "Conversations", section: "Work", allowed: () => has("user"), render: viewChat },
     { id: "approvals", label: "Approvals", section: "Work", allowed: () => has("reviewer"), render: viewApprovals, badge: true },
     { id: "activity", label: "Usage & analytics", section: "Work", allowed: () => has("user") || has("reviewer"), render: viewActivity },
@@ -381,7 +382,10 @@
   function currentRoute() {
     const [id, arg] = location.hash.replace(/^#\/?/, "").split("/");
     const allowed = VIEWS.filter((v) => v.allowed());
-    const view = allowed.find((v) => v.id === id) || allowed[0];
+    // People who only hold the user role land on Start; reviewers and admins keep Conversations.
+    const plain = !has("reviewer") && !has("platform-admin");
+    const landing = (plain && allowed.find((v) => v.id === "start")) || allowed.find((v) => v.id !== "start") || allowed[0];
+    const view = allowed.find((v) => v.id === id) || landing;
     return { view, arg: view && view.id === id ? decodeURIComponent(arg || "") : "" };
   }
 
@@ -825,6 +829,40 @@
   // ---------------------------------------------------------------------------
   // Agents and prompts
   // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Start: pick who to talk to (the landing page for people with only the user role)
+  // ---------------------------------------------------------------------------
+  async function viewStart(root) {
+    root.append(pageHead("Start a conversation", "Choose who you want to work with, or just ask and the right assistant is picked for you. Anything that changes files or runs commands waits for a reviewer to approve it first."));
+    const grid = h("div", { class: "grid", id: "catalogue" });
+    root.append(grid);
+    const begin = async (agent, btn) => {
+      btn.disabled = true;
+      try {
+        const { session_id } = await api("POST", "/v1/sessions", agent ? { agent } : {});
+        store.set("session", session_id);
+        location.hash = "#/chat/" + encodeURIComponent(session_id);
+      } catch (e) { toast(e.message, "error"); btn.disabled = false; }
+    };
+    const card = (key, title, text, extra, recommended) => {
+      const btn = h("button", { class: "btn", "data-start": key || "auto", onclick: (ev) => begin(key, ev.currentTarget) }, "Start conversation");
+      return h("div", { class: "card pad stack", "data-agent": key || "auto" },
+        h("div", { class: "row" }, h("h2", { text: title }), recommended ? h("span", { class: "pill accent", text: "recommended" }) : null),
+        h("p", { class: "muted", text }), extra, h("div", { class: "row" }, btn));
+    };
+    grid.append(card(null, "Not sure? Just ask", "Describe what you need. The right assistant is chosen from your first message.", null, false));
+    try {
+      const agents = await api("GET", "/v1/agents");
+      for (const a of agents) {
+        const asks = (a.tools || []).filter((t) => t.risk === "high").map((t) => t.name);
+        const note = asks.length
+          ? h("p", { class: "small", title: asks.join(", ") }, h("strong", { text: "Asks a reviewer first: " }), asks.join(", "))
+          : h("p", { class: "small muted", text: "Does not change anything." });
+        grid.append(card(a.name, a.title || a.name, a.summary || a.description, note, a.default));
+      }
+    } catch (e) { grid.append(errorBox(e)); }
+  }
+
   async function viewAgents(root) {
     root.append(pageHead("Agents & prompts", has("admin")
       ? "The agents available in this deployment. As a tenant admin you can change the prompt each one uses for your tenant."

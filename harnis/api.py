@@ -46,6 +46,7 @@ STATIC = Path(__file__).parent / "static"
 # ---------------------------------------------------------------------------
 class CreateSession(BaseModel):
     files: dict[str, str] = Field(default_factory=dict, description="optional seed files: path -> content")
+    agent: str | None = Field(None, max_length=64, description="start with this agent instead of letting the router choose")
 
 
 class TurnIn(BaseModel):
@@ -402,7 +403,9 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
                 safe_path(probe, path)
             except WorkspaceError as exc:
                 raise HTTPException(400, f"{path}: {exc}") from exc
-        rec = store.create_session(p.tenant_id, p.user_id)
+        if body.agent is not None and body.agent not in registry.agents:
+            raise HTTPException(400, f"unknown agent {body.agent!r}")
+        rec = store.create_session(p.tenant_id, p.user_id, body.agent)
         ws = workspace_for(workspaces, p.tenant_id, rec.session_id)
         for path, content in body.files.items():
             target = safe_path(ws, path)
@@ -588,6 +591,8 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
     def list_agents(p: Principal = Depends(current_principal)) -> list[dict[str, Any]]:
         """Agents and the tools each may use (with their risk tier)."""
         return [{"name": a.name, "description": a.description, "default": a.name == registry.default_agent,
+                 "title": a.title or a.name.replace("_", " ").replace("-", " ").title(),
+                 "summary": a.summary or a.description,
                  "tools": [{"name": t, "risk": registry.tools[t].risk} for t in a.tools]}
                 for a in registry.agents.values()]
 
