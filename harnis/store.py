@@ -31,13 +31,16 @@ class PgStore:
         return tenant_tx(tenant_id, self.pool)
 
     # -- sessions ----------------------------------------------------------------
-    def create_session(self, tenant_id: str, user_id: str) -> SessionRecord:
+    def create_session(self, tenant_id: str, user_id: str, agent: str | None = None) -> SessionRecord:
         sid = "sess_" + uuid.uuid4().hex
+        state = new_state()
+        if agent:  # the user picked it on the Start page: the router must not override that
+            state["agent"], state["pinned_agent"] = agent, True
         with self._tx(tenant_id) as conn:
             conn.execute(
                 "INSERT INTO sessions (session_id, tenant_id, user_id, state) VALUES (%s, %s, %s, %s)",
-                (sid, tenant_id, user_id, pg.Jsonb(new_state())))
-        return SessionRecord(sid, tenant_id, user_id, "idle", "ingest", new_state(), 0)
+                (sid, tenant_id, user_id, pg.Jsonb(state)))
+        return SessionRecord(sid, tenant_id, user_id, "idle", "ingest", state, 0)
 
     def load_session(self, tenant_id: str, session_id: str) -> SessionRecord | None:
         with self._tx(tenant_id) as conn:

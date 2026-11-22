@@ -480,3 +480,22 @@ def test_approvals_queue_filters_countdown_and_background_alert(page, tmp_path, 
         assert tools() == {"write_file"}
         page.select_option("#fSort", "expiring")
         expect(page.locator(".approval").first).to_contain_text("write_file")
+
+
+def test_plain_users_land_on_start_and_begin_with_a_chosen_agent(page, tmp_path, app_pool, redis_client):
+    from harnis.auth import mint_token
+
+    expect = sync_api.expect
+    tid = f"t-{uuid.uuid4().hex[:8]}"
+    platform, user = mint_token("ops", "platform", ["platform-admin"]), mint_token("sam", tid, ["user"])
+    with serve(harnis_app(tmp_path, app_pool, redis_client)) as url:
+        _call(url, "PUT", f"/v1/admin/tenants/{tid}", platform, {"name": "Start Co", "allowed_providers": ["mock"]})
+        _sign_in_with(page, url, user)
+        expect(page.locator("h1")).to_contain_text("Start a conversation")   # the landing page
+        expect(page.locator("#catalogue .card")).to_have_count(3)             # auto + coder + support
+        expect(page.locator('[data-agent="coder"]')).to_contain_text("Coding assistant")
+        expect(page.locator('[data-agent="coder"]')).to_contain_text("Asks a reviewer first")
+        expect(page.locator('[data-agent="support"]')).to_contain_text("Does not change anything")
+        page.click('[data-start="coder"]')
+        expect(page.locator(".conv-head .pill", has_text="agent: coder")).to_be_visible()
+        assert "#/chat/" in page.url

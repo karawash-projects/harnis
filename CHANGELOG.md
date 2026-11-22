@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-22
+
+### Added
+- **Start page** in the console: every agent as a card with a plain title and summary, what needs a reviewer's approval, and a "Start conversation" button, plus "Not sure? Just ask" (the router picks, as before). People who only hold the `user` role land here; reviewers and admins keep landing on Conversations.
+- `POST /v1/sessions` accepts `agent`: the conversation starts on that agent and is not re-routed (unknown agents get 400). `GET /v1/agents` adds `title` and `summary`; `AgentSpec` gains optional `title` and `summary` for plugin agents.
+
 ## [1.7.0] - 2026-11-22
 
 ### Added

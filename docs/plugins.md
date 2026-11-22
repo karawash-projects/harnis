@@ -65,8 +65,12 @@ registry.add_agent(AgentSpec(
     sticky=False,        # route each new message again (like support); True keeps the conversation (like coder)
     cacheable=False,     # allow semantic-cache answers for first messages; only if answers don't depend on data
     auto_continue=False, # nudge models that announce a step without taking it (useful for multi-step work)
+    title="Orders help", # shown on the console's Start page (defaults to the name)
+    summary="Looks up your orders and shipping status.",  # plain words for staff (defaults to the description)
 ))
 ```
+
+The console's Start page lists every registered agent as a card with its `title` and `summary`; a person who picks one starts the conversation on that agent and it is not re-routed afterwards (`POST /v1/sessions` with `{"agent": "orders"}`). "Not sure? Just ask" starts without an agent and the router chooses, as before.
 
 The router chooses between all registered agents using their `description`s, and the `route` and `handoff` tools list them automatically. Tenants can override any agent's prompt (and the router's) with `POST /v1/prompts`; the version number is part of the cache scope.
 
