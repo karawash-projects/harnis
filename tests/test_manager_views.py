@@ -79,14 +79,15 @@ def test_platform_operations_refuse_to_run_inside_a_tenant_context(client, tenan
     """A tenant-scoped connection cannot delete another tenant or lift its safety freeze."""
     other = f"{tenant}-x"
     assert client.put(f"/v1/admin/tenants/{other}", json={"allowed_providers": ["mock"]}, headers=h("ops", "platform", ("platform-admin",))).status_code == 200
-    with app_pool.connection() as c:
-        c.execute("SELECT set_config('app.tenant_id', %s, false)", (tenant,))
-        for sql in ("SELECT harnis_delete_tenant(%s)", "SELECT harnis_admin_clear_trip(%s, 'x')"):
+    # A rolled-back transaction also rolls back a session setting, so select the tenant afresh each time.
+    for sql in ("SELECT harnis_delete_tenant(%s)", "SELECT harnis_admin_clear_trip(%s, 'x')"):
+        with app_pool.connection() as c:
+            c.execute("SELECT set_config('app.tenant_id', %s, false)", (tenant,))
             with pytest.raises(Exception, match="platform operation"):
                 c.execute(sql, (other,))
             c.rollback()
-        c.execute("SELECT set_config('app.tenant_id', '', false)")
-        c.commit()
+            c.execute("SELECT set_config('app.tenant_id', '', false)")
+            c.commit()
     # The platform's own path still works: disable, then delete.
     ops = h("ops", "platform", ("platform-admin",))
     client.put(f"/v1/admin/tenants/{other}", json={"active": False}, headers=ops)
