@@ -108,6 +108,9 @@ def session_view(rec: SessionRecord) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # App factory (dependencies injectable for tests)
 # ---------------------------------------------------------------------------
+_HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+
+
 def create_app(settings: Settings | None = None, *, store=None, redis=None, router=None,
                sandbox=None, cache: Any = "auto", auth: Authenticator | None = None,
                registry: Registry | None = None) -> FastAPI:
@@ -182,7 +185,8 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
                       max_turn_seconds=settings.max_turn_seconds, max_output_tokens=settings.max_output_tokens, history_max_chars=settings.history_max_chars,
                       require_tests=settings.require_tests, trip_min_turns=settings.trip_min_turns,
                       trip_failure_ratio=settings.trip_failure_ratio,
-                      trip_window_minutes=settings.trip_window_minutes),
+                      trip_window_minutes=settings.trip_window_minutes,
+                      cache_shared_across_users=settings.cache_shared_across_users),
         registry=registry))
 
     @asynccontextmanager
@@ -256,8 +260,9 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
         route = request.scope.get("route")
         template = getattr(route, "path", None) or "unmatched"  # templates, never raw paths (ids)
         if template != "/metrics":
-            metrics.HTTP_REQUESTS.labels(request.method, template, str(response.status_code)).inc()
-            metrics.HTTP_LATENCY.labels(request.method, template).observe(time.perf_counter() - started)
+            method = request.method if request.method in _HTTP_METHODS else "other"  # bounded label set
+            metrics.HTTP_REQUESTS.labels(method, template, str(response.status_code)).inc()
+            metrics.HTTP_LATENCY.labels(method, template).observe(time.perf_counter() - started)
         h = response.headers
         h.setdefault("X-Content-Type-Options", "nosniff")
         h.setdefault("Referrer-Policy", "no-referrer")
@@ -348,17 +353,21 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
             raise HTTPException(403, "tenant is disabled")
         if len(body.files) > settings.max_seed_files:
             raise HTTPException(413, f"at most {settings.max_seed_files} seed files")
-        rec = store.create_session(p.tenant_id, p.user_id)
-        ws = workspace_for(workspaces, p.tenant_id, rec.session_id)
+        # Validate every seed file before anything is created, so a bad request leaves no orphan session.
+        probe = workspaces / p.tenant_id / "_validate"  # never created: only used to check the paths
         for path, content in body.files.items():
             if len(content.encode()) > settings.max_seed_file_bytes:
                 raise HTTPException(413, f"{path} is larger than {settings.max_seed_file_bytes} bytes")
             try:
                 if is_reserved(path):
                     raise WorkspaceError(".harnis/ is reserved for installed dependencies")
-                target = safe_path(ws, path)
+                safe_path(probe, path)
             except WorkspaceError as exc:
                 raise HTTPException(400, f"{path}: {exc}") from exc
+        rec = store.create_session(p.tenant_id, p.user_id)
+        ws = workspace_for(workspaces, p.tenant_id, rec.session_id)
+        for path, content in body.files.items():
+            target = safe_path(ws, path)
             target.parent.mkdir(parents=True, exist_ok=True)
             write_text(target, content)
         store.audit(p.tenant_id, rec.session_id, p.user_id, "session_created", {"seed_files": len(body.files)})
@@ -549,7 +558,7 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
     def create_api_key(body: ApiKeyIn, p: Principal = Depends(require_role("admin"))) -> dict[str, Any]:
         key_id, full_key, secret_hash = new_api_key()
         row = store.create_api_key(p.tenant_id, key_id, body.name, secret_hash, sorted(set(body.roles)),
-                                   p.user_id, body.expires_in_days)
+                                   p.owner or p.user_id, body.expires_in_days)  # a key's key belongs to the same human
         return {**row, "key": full_key, "note": "Store this key now; it cannot be shown again."}
 
     @app.get("/v1/admin/api-keys")

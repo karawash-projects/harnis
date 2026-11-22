@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-22
+
+More fixes from the pre-production review (items #11, #13, #15, #20, #21, #26, #29, #30 and the 401 message).
+
+### Security
+- **A disabled tenant is refused for every credential**, not only API keys: a JWT or OIDC token for a disabled tenant now gets 403 on all endpoints (the status is cached for up to 30 s per process).
+- **Separation of duties holds through key chains.** A key created by another key is recorded as created by the same human, so an admin can no longer approve a request made through a key they created indirectly.
+- **The answer cache is per user by default** (`CACHE_SHARED_ACROSS_USERS=false`). Shared, a first message from one user could be served to colleagues, and a user could seed answers for them. **Set it to `true` to restore sharing within a tenant.**
+- 401 responses no longer include the token parser's error text (it is logged at debug level).
+- Erasing a user also deletes sessions created through their API keys and **revokes those keys**; the audit match is literal (`LIKE` treated `_` and `%` as wildcards). Migration `011_hardening.sql`.
+
+### Fixed
+- Applying sandbox output to the workspace is all or nothing: the size limits are checked over the whole archive first, so a run that is too large no longer leaves the workspace half written.
+- Maintenance no longer stops when rows already sit in the DEFAULT ledger partition for a month it must create; they are moved into the new partition.
+- A rejected seed file (`400`/`413`) no longer leaves an empty session behind.
+- The HTTP request counter's `method` label is limited to the standard methods (others are `other`), so arbitrary methods cannot create unlimited series.
+
 ## [1.4.1] - 2026-11-22
 
 ### Fixed
