@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-22
+
+Harness controls: limits and safety nets that act on their own, with console support.
+
+### Added
+- **Spend caps per tenant** (daily and monthly, USD) and a **wall-clock limit per turn** (`max_turn_seconds`, counting working time only, not time waiting for an approval; platform default `MAX_TURN_SECONDS`, off). A tenant over its cap gets its new turns rejected until the period rolls over. Set them with `PUT /v1/admin/tenants/{id}` or the Tenants page (migration `010_harness_controls.sql`).
+- **History compaction.** Beyond `HISTORY_MAX_CHARS` (default 120000) old tool output in a conversation is cut short; messages, tool pairing and the most recent turns stay intact. Flagged `history_compacted`.
+- **Test gate** (`require_tests` per tenant, or `REQUIRE_TESTS`): a coding turn that changed files cannot finish until `run_tests` passes. The agent is told to run them; if it still has not, the turn is escalated as `tests_failing` instead of reporting success. Off by default.
+- **Trip wires that act.** Writes (`write_file`, `run_command`, `install_dependencies`) are frozen for the tenant when an agent loops twice, when the failure rate of recent turns passes `TRIP_FAILURE_RATIO` (default 0.8 over at least `TRIP_MIN_TURNS`=10 turns in `TRIP_WINDOW_MINUTES`=60), or when content an agent read looked like an instruction and the agent then asked to change something. An alert is sent and the event is audited. A platform admin clears it (`POST /v1/admin/tenants/{id}/clear-trip` or the Tenants page).
+- **Health scorecard**: `GET /v1/scorecard` and a card on the Usage & analytics page: outcomes, safety events, pending approvals, spend against caps, active controls and any trip wire.
+
+### Changed
+- `GET /v1/admin/tenants` and the tenant record gain the new fields. Custom `Store` implementations need `spend_since`, `trip_tenant` and `recent_outcomes` (the orchestrator skips caps and failure-rate wires when they are absent).
+
 ## [1.3.0] - 2026-11-06
 
 ### Added

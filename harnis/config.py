@@ -139,6 +139,12 @@ class Settings(BaseSettings):
     max_cost_usd_per_turn: float = 2.00
     max_handoffs_per_turn: int = 6
     max_tool_calls_per_turn: int = 20
+    max_turn_seconds: int = 0  # wall-clock limit per turn, excluding time waiting for approval; 0 = off
+    history_max_chars: int = 120_000  # older tool output is trimmed beyond this; 0 = never compact
+    require_tests: bool = False  # a coding turn that changed files must end with passing tests
+    trip_min_turns: int = 10  # trip wire: freeze writes when most recent turns fail...
+    trip_failure_ratio: float = 0.8  # ...(ratio of failed/escalated turns in the window; 0 = off)
+    trip_window_minutes: int = 60
     auto_continue_max: int = 2  # nudges when a coder announces a step but doesn't take it
     reroute_from_support: bool = True  # route every new message again while a session is with support
     loop_window: int = 6

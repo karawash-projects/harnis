@@ -111,6 +111,13 @@ class Limits:
     loop_threshold: int = 2
     auto_continue_max: int = 2
     reroute_from_support: bool = True
+    max_turn_seconds: int = 0
+    history_max_chars: int = 120_000
+    require_tests: bool = False
+    verify_max_nudges: int = 2
+    trip_min_turns: int = 10
+    trip_failure_ratio: float = 0.8
+    trip_window_minutes: int = 60
 
 
 @dataclass
@@ -168,6 +175,30 @@ def clean_history(messages: list[dict[str, Any]]) -> list[Message]:
         blocks = [b for b in m["content"] if not _empty_text(b)]
         out.append(Message(m["role"], blocks or [{"type": "text", "text": EMPTY_REPLY}]))
     return out
+
+
+def _block_chars(m: dict[str, Any]) -> int:
+    return sum(len(str(b.get("text") or b.get("content") or b.get("input") or "")) for b in m["content"])
+
+
+def compact_history(messages: list[dict[str, Any]], max_chars: int, keep_recent: int = 8,
+                    keep_chars: int = 400) -> bool:
+    """Bound the conversation sent to the model. Old tool output (file contents, test
+    logs) is the bulk of a coding session; beyond `max_chars` it is cut to `keep_chars`
+    in every message except the most recent `keep_recent`. The message structure, so
+    every tool_use still has its tool_result, and all user and assistant text stay as
+    they are. Returns True when something was trimmed."""
+    if max_chars <= 0 or sum(_block_chars(m) for m in messages) <= max_chars:
+        return False
+    changed = False
+    for m in messages[:-keep_recent] if keep_recent else messages:
+        for b in m["content"]:
+            if b.get("type") == "tool_result" and isinstance(b.get("content"), str) \
+                    and len(b["content"]) > keep_chars:
+                b["content"] = (b["content"][:keep_chars]
+                                + f"\n[... {len(b['content']) - keep_chars} characters of older output removed]")
+                changed = True
+    return changed
 
 
 class Orchestrator:
@@ -235,7 +266,13 @@ class Orchestrator:
                     node = self._halt(rec, "failed", "step_budget_exceeded",
                                       f"Stopped: step budget of {self.d.limits.max_steps} reached.")
                     break
+                limit_s = self._time_limit(rec)
+                if limit_s and turn.get("active_s", 0.0) > limit_s:
+                    node = self._halt(rec, "failed", "time_budget_exceeded",
+                                      f"Stopped: this turn used its {limit_s}-second time budget.")
+                    break
                 turn["steps"] += 1
+                node_started = time.perf_counter()
                 with tracer.start_as_current_span(f"harnis.node.{node}"):
                     try:
                         nxt = self.nodes[node](rec)
@@ -247,6 +284,7 @@ class Orchestrator:
                         nxt = self._halt(rec, "failed", "internal_error",
                                          "Something went wrong while handling this request. "
                                          "The error was logged; please try again.")
+                turn["active_s"] = round(turn.get("active_s", 0.0) + time.perf_counter() - node_started, 3)
                 self.d.publish(rec.tenant_id, f"user:{rec.user_id}",
                                {"type": "node", "session_id": rec.session_id, "node": node, "next": nxt})
                 rec.current_node = nxt if nxt not in (END, SUSPEND) else node
@@ -262,6 +300,7 @@ class Orchestrator:
             latency = int((time.time() - turn.get("started_at", time.time())) * 1000)
             self.d.store.record_metric(rec.tenant_id, rec.session_id, latency, turn.get("cache_hit", False),
                                        rec.status, turn.get("steps", 0))
+            self._check_trip_wires(rec)
             self.d.publish(rec.tenant_id, f"user:{rec.user_id}",
                            {"type": "turn_complete", "session_id": rec.session_id,
                             "status": rec.status, "reply": st.get("reply")})
@@ -297,6 +336,10 @@ class Orchestrator:
     # -- nodes -----------------------------------------------------------------
     def ingest(self, rec: SessionRecord) -> str:
         st = rec.state
+        capped = self._spend_cap_reached(rec)
+        if capped:
+            st["turn"].pop("input", None)
+            return self._halt(rec, "rejected", "spend_cap_reached", capped)
         result = self.d.input_guard.check(st["turn"]["input"])
         st["turn"].pop("input", None)  # never persist the raw (unredacted) input
         # In queue mode the API already redacted the message; its findings are carried here.
@@ -381,6 +424,10 @@ class Orchestrator:
         st = rec.state
         system, _ = self._prompt(rec, st["agent"])
         tools = self.d.registry.tools_for(st["agent"])
+        if compact_history(st["messages"], self.d.limits.history_max_chars):
+            if "history_compacted" not in st["flags"]:
+                st["flags"].append("history_compacted")
+                self.d.store.audit(rec.tenant_id, rec.session_id, "harnis", "history_compacted", {})
         req = LLMRequest(system=system, messages=clean_history(st["messages"]), tools=tools)
         resp = self._call_llm(rec, req)
         if resp is None:
@@ -406,6 +453,11 @@ class Orchestrator:
             st["flags"].append("auto_continue")
             st["messages"].append(Message("user", [{"type": "text", "text": CONTINUE_NUDGE}]).to_dict())
             return "agent"
+        gate = self._verify_gate(rec)
+        if gate == "nudge":
+            return "agent"
+        if gate:
+            return gate
         st["reply"] = resp.text or EMPTY_REPLY
         return "respond"
 
@@ -425,6 +477,7 @@ class Orchestrator:
                 if untrusted:
                     text, flags = wrap_untrusted(name, text)
                     if flags:
+                        turn["injection_seen"] = True
                         st["flags"].append(f"tool_output_injection_suspected:{name}")
                         metrics.GUARD_BLOCKS.labels("tool_output_injection_suspected").inc()
                         self.d.store.audit(rec.tenant_id, rec.session_id, "harnis",
@@ -457,6 +510,7 @@ class Orchestrator:
             if not resuming and window.count(fp) >= self.d.limits.loop_threshold:
                 turn["loop_trips"] += 1
                 if turn["loop_trips"] >= 2:
+                    self._trip(rec, "loop_detected", pause=False)
                     return self._halt(rec, "escalated", "loop_detected",
                                       "Stopped: the agent kept repeating the same action. A human has been notified.")
                 result(f"LOOP DETECTED: you already called {name} with these exact arguments "
@@ -488,6 +542,19 @@ class Orchestrator:
                                       f"A human operator will take over. Reason: {parsed.reason}")  # type: ignore[attr-defined]
                 continue
 
+            if tool.risk == "high" and not resuming:
+                if self.d.store.tenant_policy(rec.tenant_id).get("writes_frozen"):
+                    result("writes are frozen for this tenant by a safety trip wire; an administrator "
+                           "must clear it. Explain this to the user instead of retrying.", True)
+                    continue
+                if turn.get("injection_seen"):
+                    # Untrusted tool output that looked like an instruction, followed by a request
+                    # to change something: stop here and freeze writes until a human has looked.
+                    self._trip(rec, "injection_suspected_before_write", pause=False)
+                    return self._halt(rec, "escalated", "injection_before_write",
+                                      "Stopped: content the agent read looked like an instruction and the "
+                                      "agent then asked to make a change. Writes are frozen until an "
+                                      "administrator reviews this.")
             if tool.risk == "high":
                 action = describe_action(ws, name, parsed.model_dump(), tool)
                 h = action_hash(action)
@@ -519,6 +586,10 @@ class Orchestrator:
                     return SUSPEND
 
             output, is_error = tool.run(ctx, parsed)  # type: ignore[misc]
+            if name in ("write_file", "run_command", "install_dependencies") and not is_error:
+                turn["changed"], turn["tests_passed"] = True, False
+            elif name == "run_tests":
+                turn["tests_passed"] = not is_error
             metrics.TOOL_CALLS.labels(metrics.safe(name), "error" if is_error else "ok").inc()
             result(output, is_error, untrusted=tool.untrusted_output)
 
@@ -558,6 +629,65 @@ class Orchestrator:
             return found
         reg = self.d.registry
         return (reg.router_prompt() if key == "router" else reg.agent(key).prompt), 0
+
+    def _policy(self, rec: SessionRecord) -> dict[str, Any]:
+        return self.d.store.tenant_policy(rec.tenant_id)
+
+    def _time_limit(self, rec: SessionRecord) -> int:
+        return int(self._policy(rec).get("max_turn_seconds") or self.d.limits.max_turn_seconds or 0)
+
+    def _spend_cap_reached(self, rec: SessionRecord) -> str | None:
+        """A message for the user when the tenant has used its daily or monthly budget, else None."""
+        pol = self._policy(rec)
+        day, month = pol.get("max_cost_usd_per_day"), pol.get("max_cost_usd_per_month")
+        if not (day or month) or not hasattr(self.d.store, "spend_since"):
+            return None
+        for cap, label, kw in ((day, "daily", {"days": 1}), (month, "monthly", {"month": True})):
+            if cap and self.d.store.spend_since(rec.tenant_id, **kw) >= float(cap):
+                return f"Stopped: this workspace has used its {label} budget of ${float(cap):.2f}."
+        return None
+
+    def _verify_gate(self, rec: SessionRecord) -> str | None:
+        """When tests are required: a turn that changed files may not finish until the
+        tests pass. The agent is told to run them (a few times); after that the turn is
+        escalated to a human instead of reporting success."""
+        st, turn = rec.state, rec.state["turn"]
+        required = self._policy(rec).get("require_tests") or self.d.limits.require_tests
+        if not required or not turn.get("changed") or turn.get("tests_passed"):
+            return None
+        if "run_tests" not in self.d.registry.agent(st["agent"]).tools:
+            return None
+        if turn.get("verify_nudges", 0) < self.d.limits.verify_max_nudges:
+            turn["verify_nudges"] = turn.get("verify_nudges", 0) + 1
+            st["flags"].append("verify_nudge")
+            st["messages"].append(Message("user", [{"type": "text", "text": (
+                "Before finishing, run the tests and make them pass. Do not report this work as done "
+                "until run_tests succeeds.")}]).to_dict())
+            return "nudge"
+        return self._halt(rec, "escalated", "tests_failing",
+                          "Stopped: the changes are not verified because the tests do not pass. "
+                          "A human should review the workspace.")
+
+    def _trip(self, rec: SessionRecord, reason: str, pause: bool) -> None:
+        try:
+            self.d.store.trip_tenant(rec.tenant_id, reason, pause)
+            self.d.alert("trip_wire", rec.tenant_id, rec.session_id, {"reason": reason, "paused": pause})
+        except Exception:
+            log.exception("could not apply trip wire %s", reason)
+
+    def _check_trip_wires(self, rec: SessionRecord) -> None:
+        lim = self.d.limits
+        if not lim.trip_failure_ratio or not hasattr(self.d.store, "recent_outcomes"):
+            return
+        try:
+            counts = self.d.store.recent_outcomes(rec.tenant_id, lim.trip_window_minutes)
+        except Exception:
+            return
+        total = sum(counts.values())
+        bad = counts.get("failed", 0) + counts.get("escalated", 0)
+        if total >= lim.trip_min_turns and bad / total >= lim.trip_failure_ratio \
+                and not self._policy(rec).get("writes_frozen"):
+            self._trip(rec, f"failure_rate:{bad}/{total}", pause=False)
 
     def _cost_limit(self, rec: SessionRecord) -> float:
         tenant_limit = self.d.store.tenant_policy(rec.tenant_id).get("max_cost_usd_per_turn")

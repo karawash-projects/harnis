@@ -279,3 +279,39 @@ def test_websocket_serves_platform_admins(fast_ws_client):
         assert '"hello"' in ws.receive_text()
         with pytest.raises(AssertionError, match="still open"):
             _closed_with(ws, within=1.2)  # several re-checks pass: the stream stays open
+
+
+# -- harness controls (1.4.0) ----------------------------------------------------------
+def test_controls_are_set_kept_and_removed(client, tenant):
+    r = client.put(f"/v1/admin/tenants/{tenant}", headers=PLATFORM, json={
+        "max_cost_usd_per_day": 5, "max_cost_usd_per_month": 100, "max_turn_seconds": 120, "require_tests": True})
+    t = r.json()
+    assert (t["max_cost_usd_per_day"], t["max_cost_usd_per_month"], t["max_turn_seconds"], t["require_tests"]) == (5, 100, 120, True)
+    t = client.put(f"/v1/admin/tenants/{tenant}", headers=PLATFORM, json={"name": "Renamed"}).json()
+    assert t["max_cost_usd_per_day"] == 5 and t["require_tests"] is True  # omitted = kept
+    t = client.put(f"/v1/admin/tenants/{tenant}", headers=PLATFORM,
+                   json={"max_cost_usd_per_day": 0, "max_turn_seconds": 0, "require_tests": False}).json()
+    assert t["max_cost_usd_per_day"] is None and t["max_turn_seconds"] is None and t["require_tests"] is False
+
+
+def test_scorecard_and_trip_wire_lifecycle(client, tenant, app_pool):
+    store = PgStore(app_pool)
+    tok = h("rita", tenant, ("reviewer",))
+    card = client.get("/v1/scorecard", headers=tok).json()
+    assert card["turns"] == 0 and card["trip"]["writes_frozen"] is False and card["spend"]["max_per_day"] is None
+    assert client.get("/v1/scorecard", headers=h("u", tenant)).status_code == 403
+
+    store.trip_tenant(tenant, "loop_detected", pause=False)
+    card = client.get("/v1/scorecard", headers=tok).json()
+    assert card["trip"]["writes_frozen"] is True and card["trip"]["reason"] == "loop_detected"
+    assert card["safety_events"]["trip_wire"] == 1
+    assert client.post(f"/v1/admin/tenants/{tenant}/clear-trip", headers=tok).status_code == 403
+    cleared = client.post(f"/v1/admin/tenants/{tenant}/clear-trip", headers=PLATFORM).json()
+    assert cleared["writes_frozen"] is False and cleared["tripped_reason"] is None and cleared["active"] is True
+
+
+def test_a_tenant_cannot_trip_another_tenant(app_pool, tenant):
+    from harnis.db import tenant_tx
+    with pytest.raises(Exception):
+        with tenant_tx("acme", app_pool) as conn:
+            conn.execute("SELECT harnis_trip_tenant(%s::text, 'x', true)", (tenant,))
