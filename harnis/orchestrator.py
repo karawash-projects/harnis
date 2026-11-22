@@ -142,6 +142,20 @@ class Deps:
     paths: Any = None  # PathPolicy or None
 
 
+ESCALATION_NEXT_STEPS: dict[str, list[str]] = {
+    "escalated_by_agent": ["Read what the agent said it needs, then answer in the conversation or take the task over."],
+    "loop_detected": ["Look at the recent actions: the agent kept repeating one step.",
+                      "Writes are frozen for the organization until an administrator clears the trip wire."],
+    "injection_before_write": ["Check the file or output the agent read just before: it contained text that looked like an instruction.",
+                               "Writes are frozen for the organization until an administrator clears the trip wire."],
+    "tests_failing": ["Open the test output in the conversation, then ask the agent to fix it or fix it yourself."],
+    "cost_budget_exceeded": ["Split the task into smaller steps, or raise the per-turn cost limit if this task is expected to be large."],
+    "tool_budget_exceeded": ["Split the task into smaller steps."],
+    "handoff_budget_exceeded": ["Say which specialist should handle this, or take the task over."],
+    "_default": ["Read the conversation from the last message, then reply to continue or take the task over."],
+}
+
+
 def new_state() -> dict[str, Any]:
     return {
         "messages": [],
@@ -238,6 +252,7 @@ class Orchestrator:
                       "used_tools": False, "loop_trips": 0, "cache_hit": False,
                       "started_at": time.time()}
         st["reply"] = None
+        st.pop("escalation", None)  # the handover summary belongs to the turn that produced it
         st["loop_fingerprints"] = []
         rec.status = "running"
         rec.current_node = "ingest"
@@ -317,6 +332,37 @@ class Orchestrator:
         with tracer.start_as_current_span("harnis.db.checkpoint"):
             rec.version = self.d.store.save_checkpoint(rec)
 
+    @staticmethod
+    def _note_action(turn: dict[str, Any], name: str, args: dict[str, Any], is_error: bool) -> None:
+        """What happened this turn, for the handover summary: the tool and what it touched, never contents
+        or command text (those may hold secrets)."""
+        if name in ("write_file", "read_file"):
+            target = str(args.get("path", ""))[:200]
+        elif name == "run_command":
+            target = (str(args.get("command", "")).split() or [""])[0][:60]
+        elif name == "install_dependencies":
+            target = str(args.get("manager", ""))[:20]
+        else:
+            target = ""
+        turn.setdefault("actions", []).append({"tool": name, "target": target, "ok": not is_error})
+        del turn["actions"][:-20]
+
+    def _escalation_packet(self, rec: SessionRecord, status: str, reason: str, reply: str) -> dict[str, Any]:
+        st, turn = rec.state, rec.state.get("turn", {})
+        actions = list(turn.get("actions", []))
+        request = next((b["text"] for m in reversed(st.get("messages", [])) if m["role"] == "user"
+                        for b in m["content"] if b.get("type") == "text" and b.get("text")), "")
+        tests = ("not run" if not turn.get("changed") and "tests_passed" not in turn else
+                 "passing" if turn.get("tests_passed") else "failing or not run since the last change")
+        return {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "status": status, "reason": reason,
+            "what_happened": reply, "agent": st.get("agent"), "request": request[:500],
+            "files_written": sorted({a["target"] for a in actions if a["tool"] == "write_file" and a["ok"]})[:20],
+            "recent_actions": actions[-10:], "tests": tests,
+            "steps": turn.get("steps", 0), "spent_usd": round(float(turn.get("cost_usd", 0.0)), 4),
+            "next_steps": ESCALATION_NEXT_STEPS.get(reason, ESCALATION_NEXT_STEPS["_default"]),
+        }
+
     def _halt(self, rec: SessionRecord, status: str, reason: str, reply: str) -> str:
         # Every tool_use the model emitted must get a tool_result, or the next
         # LLM call on this conversation is rejected by the provider.
@@ -327,8 +373,14 @@ class Orchestrator:
         rec.state["reply"] = reply
         rec.state.setdefault("flags", []).append(reason)
         self.d.store.audit(rec.tenant_id, rec.session_id, "harnis", reason, {})
+        detail: dict[str, Any] = {"status": status}
+        if status in ("failed", "escalated"):
+            packet = self._escalation_packet(rec, status, reason, reply)
+            rec.state["escalation"] = packet
+            detail.update(agent=packet["agent"], files_written=packet["files_written"], tests=packet["tests"],
+                          spent_usd=packet["spent_usd"])
         if status in ("failed", "escalated", "rejected"):
-            self.d.alert(reason, rec.tenant_id, rec.session_id, {"status": status})
+            self.d.alert(reason, rec.tenant_id, rec.session_id, detail)
         return END
 
     def abandon_awaiting(self, rec: SessionRecord, reason: str) -> SessionRecord:
@@ -521,6 +573,7 @@ class Orchestrator:
                                            "tool_output_injection_suspected", {"tool": name, "flags": flags})
                 st["tool_results"].append({"type": "tool_result", "tool_use_id": call["id"],
                                            "content": text, "is_error": is_error})
+                self._note_action(turn, name, args, is_error)
                 self.d.publish(rec.tenant_id, f"user:{rec.user_id}",
                                {"type": "tool_result", "session_id": rec.session_id, "tool": name,
                                 "is_error": is_error, "preview": text[:300]})

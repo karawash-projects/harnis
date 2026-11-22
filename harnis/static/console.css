@@ -244,3 +244,6 @@ td .detail { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-
   .msg { max-width: 92%; }
   .topbar .who .name { max-width: 120px; }
 }
+.handover { align-self: stretch; margin: 8px 0; padding: 12px 14px; }
+.handover h3 { margin: 0 0 8px; }
+.handover .row { gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 4px; }

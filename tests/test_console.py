@@ -587,3 +587,30 @@ def test_narrow_screen_has_no_sideways_scroll_and_menu_closes_after_use(page, tm
         page.click('.nav a[href="#/approvals"]')
         expect(page.locator("#mainNav")).to_be_hidden()
         expect(page.locator("#content")).to_be_focused()
+
+
+def test_handover_summary_is_shown_when_a_conversation_was_escalated(page, tmp_path, app_pool, redis_client):
+    expect = sync_api.expect
+    packet = {"what_happened": "A human operator will take over. Reason: unclear which database", "request": "set up the database layer",
+              "files_written": ["db.py"], "tests": "not run", "spent_usd": 0.0123,
+              "recent_actions": [{"tool": "write_file", "target": "db.py", "ok": True}],
+              "next_steps": ["Read what the agent said it needs, then answer in the conversation or take the task over."]}
+    with serve(harnis_app(tmp_path, app_pool, redis_client)) as url:
+        page.goto(url + "/")
+        page.click("#devToken")
+        page.click("#newSession")
+        page.fill("#messageInput", "hello")
+        page.click("#sendBtn")
+        expect(page.locator(".msg.assistant").first).to_be_visible()
+
+        def answer(route):  # the same API response the console would get for an escalated session
+            resp = route.fetch()
+            body = resp.json()
+            body.update(status="escalated", escalation=packet)
+            route.fulfill(response=resp, json=body)
+        page.route("**/v1/sessions/sess_*", answer)
+        page.reload()
+        expect(page.locator("#handover")).to_contain_text("Handover summary")
+        expect(page.locator("#handover")).to_contain_text("unclear which database")
+        expect(page.locator("#handover")).to_contain_text("db.py")
+        expect(page.locator("#handover")).to_contain_text("Suggested next steps")

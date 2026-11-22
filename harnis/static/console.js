@@ -606,9 +606,27 @@
       if (v.status !== "completed" && v.status !== "awaiting_approval" && v.reply) {
         nodes.push(h("div", { class: "msg system", text: v.reply }));
       }
+      if (v.escalation) nodes.push(handoverCard(v.escalation));
       messages.replaceChildren(...nodes);
       if (v.status === "awaiting_approval") showPendingApproval(v);
       messages.scrollTop = messages.scrollHeight;
+    }
+
+    // What a person taking over needs: what was asked, what the agent did, where it stopped, what to do next.
+    function handoverCard(e) {
+      const item = (label, value) => value ? h("div", { class: "row" }, h("strong", { text: label }), h("span", { text: value })) : null;
+      const actions = (e.recent_actions || []).map((a) => `${a.ok ? "✓" : "✗"} ${a.tool}${a.target ? " " + a.target : ""}`);
+      return h("div", { class: "card handover", id: "handover" },
+        h("h3", { text: "Handover summary" }),
+        item("What happened", e.what_happened),
+        item("Asked", e.request),
+        item("Files written", (e.files_written || []).join(", ") || "none"),
+        item("Tests", e.tests),
+        item("Spent this turn", money(e.spent_usd)),
+        actions.length ? h("details", {}, h("summary", { text: "Recent actions" }),
+          h("ul", {}, ...actions.map((t) => h("li", { class: "mono small", text: t })))) : null,
+        h("strong", { text: "Suggested next steps" }),
+        h("ul", {}, ...(e.next_steps || []).map((t) => h("li", { text: t }))));
     }
 
     function showPendingApproval(v) {

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-11-22
+
+### Added
+- **Handover summary** when a conversation is escalated or stops with an error: what the user asked, what the agent said or why it stopped, the files it wrote, the recent actions and whether each worked, test status, what the turn cost, and suggested next steps for that kind of stop. It is shown in the console above the message box and returned as `escalation` on `GET /v1/sessions/{id}` (only while the conversation is escalated or failed; a new message clears it). The alert for that event now carries the agent, files written, test status and cost.
+- The summary records tool names and what they touched (a file path, a command's first word, the package manager), never file contents or command text, which may hold secrets.
+
 ## [1.13.0] - 2026-11-22
 
 ### Added
