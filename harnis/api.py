@@ -108,6 +108,28 @@ def session_view(rec: SessionRecord) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # App factory (dependencies injectable for tests)
 # ---------------------------------------------------------------------------
+_LOGO_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+               ".svg": "image/svg+xml"}
+_LOGO_MAX_BYTES = 256 * 1024
+
+
+def _load_logo(path: str) -> tuple[bytes, str] | None:
+    """Read the configured logo once at startup, so a bad path fails the deploy, not a page view."""
+    if not path:
+        return None
+    p = Path(path)
+    media = _LOGO_TYPES.get(p.suffix.lower())
+    if media is None:
+        raise RuntimeError("CONSOLE_LOGO_PATH must be a .png, .jpg, .webp or .svg file")
+    try:
+        data = p.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(f"CONSOLE_LOGO_PATH could not be read: {exc}") from exc
+    if len(data) > _LOGO_MAX_BYTES:
+        raise RuntimeError(f"CONSOLE_LOGO_PATH is larger than {_LOGO_MAX_BYTES // 1024} KB")
+    return data, media
+
+
 _HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 
 
@@ -310,12 +332,28 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
             body, content_type = metrics.render()
             return Response(body, media_type=content_type)
 
+    logo = _load_logo(settings.console_logo_path)
+
     @app.get("/v1/auth/config")
     def auth_config() -> dict[str, Any]:
-        """Public: how the console should sign users in. Contains no secrets."""
+        """Public: how the console should sign users in and how it is branded. Contains no secrets."""
         return {"auth_mode": settings.auth_mode, "version": __version__,
                 "dev_token": settings.env == "development" and settings.auth_mode == "local",
-                "oidc": _oidc_console_config()}
+                "oidc": _oidc_console_config(),
+                "brand": {"name": settings.console_brand_name, "logo": logo is not None,
+                          "accent": settings.console_accent or None,
+                          "accent_dark": settings.console_accent_dark or None,
+                          "help_url": settings.console_help_url or None}}
+
+    @app.get("/console/logo", include_in_schema=False)
+    def console_logo() -> Response:
+        if logo is None:
+            raise HTTPException(404, "no logo configured")
+        data, media_type = logo
+        # An SVG opened directly must not be able to run script: sandbox it, and only <img> uses it.
+        return Response(data, media_type=media_type, headers={
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+            "X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=3600"})
 
     if settings.console_enabled:
         app.mount("/static", StaticFiles(directory=STATIC), name="static")

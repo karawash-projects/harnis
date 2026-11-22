@@ -71,7 +71,46 @@
     completed: "ok", approved: "ok", awaiting_approval: "warn", pending: "warn", running: "accent",
     idle: "", rejected: "danger", denied: "danger", failed: "danger", escalated: "danger", expired: "",
   };
-  const statusPill = (s) => h("span", { class: "pill " + (STATUS_KIND[s] || ""), text: String(s || "").replace(/_/g, " ") });
+  // Plain wording for people who are not operators.
+  const STATUS_LABEL = {
+    completed: "Done", awaiting_approval: "Waiting for approval", running: "Working", failed: "Stopped with an error",
+    rejected: "Blocked", escalated: "Passed to a person", pending: "Waiting", idle: "Ready",
+  };
+  const statusText = (s) => STATUS_LABEL[s] || (String(s || "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()));
+  const statusPill = (s) => h("span", { class: "pill " + (STATUS_KIND[s] || ""), text: statusText(s) });
+
+  // ---------------------------------------------------------------------------
+  // Branding (name, logo, colours, help link come from the public config)
+  // ---------------------------------------------------------------------------
+  const brand = () => (state.config && state.config.brand) || { name: "Harnis" };
+  function brandBlock() {
+    const b = brand();
+    const mark = b.logo
+      ? h("img", { class: "logo", src: "/console/logo", alt: "" })
+      : h("span", { class: "mark", text: (b.name || "H").charAt(0).toUpperCase() });
+    return h("div", { class: "brand" }, mark, b.name);
+  }
+  function helpLink() {
+    const b = brand();
+    return b.help_url ? h("a", { class: "help", href: b.help_url, target: "_blank", rel: "noopener noreferrer", text: "Help" }) : null;
+  }
+  function applyBrand() {
+    const b = brand();
+    document.title = b.name || "Harnis";
+    const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+    const root = document.documentElement.style;
+    const apply = () => {
+      const hex = (dark && dark.matches && b.accent_dark) || b.accent;
+      if (!hex) { for (const k of ["--accent", "--accent-ink", "--accent-soft"]) root.removeProperty(k); return; }
+      const [r, g, bl] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      const lum = (0.2126 * r + 0.7152 * g + 0.0722 * bl) / 255;
+      root.setProperty("--accent", hex);
+      root.setProperty("--accent-ink", lum > 0.6 ? "#111111" : "#ffffff");
+      root.setProperty("--accent-soft", `color-mix(in srgb, ${hex} 14%, var(--surface))`);
+    };
+    apply();
+    if (dark && dark.addEventListener) dark.addEventListener("change", apply);
+  }
 
   // ---------------------------------------------------------------------------
   // State and API access
@@ -240,12 +279,13 @@
       : null;
 
     $("#app").replaceChildren(h("div", { class: "signin" }, h("div", { class: "card" },
-      h("div", { class: "brand" }, h("span", { class: "mark", text: "H" }), "Harnis"),
+      brandBlock(),
       h("h1", { text: "Sign in" }),
       h("p", { class: "muted", text: "Agents with approvals, sandboxing and tenant isolation." }),
       h("div", { class: "stack signin-body" }, err, ...ways, ...other, hint),
       h("p", { class: "muted small" }, "API reference: ", h("a", { href: "/docs", text: "/docs" }),
         cfg.version ? ` · v${cfg.version}` : ""),
+      helpLink() ? h("p", { class: "small" }, helpLink()) : null,
     )));
   }
 
@@ -338,9 +378,10 @@
     const roles = me.roles.length ? me.roles : ["no roles"];
     $("#app").replaceChildren(h("div", { class: "shell" },
       h("header", { class: "topbar" },
-        h("div", { class: "brand" }, h("span", { class: "mark", text: "H" }), "Harnis"),
+        brandBlock(),
         h("span", { class: "pill", title: "Tenant", text: me.tenant_id }),
         h("span", { class: "spacer" }),
+        helpLink(),
         h("span", { class: "live", id: "liveDot" }),
         h("div", { class: "who" },
           h("span", { class: "name", title: `${me.user_id} (${me.via})`, text: me.user_id }),
@@ -1002,6 +1043,7 @@
     try {
       const r = await fetch("/v1/auth/config");
       state.config = await r.json();
+      applyBrand();
     } catch {
       $("#app").replaceChildren(h("div", { class: "boot", text: "The Harnis API can't be reached." }));
       return;

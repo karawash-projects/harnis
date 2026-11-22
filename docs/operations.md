@@ -125,6 +125,10 @@ Suggested alerts (adapt thresholds to your traffic):
 
 Harnis also sends its own alerts (halted turns, open circuit breakers, slow spans) to `ALERT_WEBHOOK_URL`.
 
+## Console branding
+
+Each deployment can show its own name, logo, colour and a help link; every tenant of the deployment sees the same branding. Settings: `CONSOLE_BRAND_NAME`, `CONSOLE_LOGO_PATH` (a PNG, JPEG, WebP or SVG file of at most 256 KB, read at startup so a bad path fails the deploy), `CONSOLE_ACCENT` and optionally `CONSOLE_ACCENT_DARK` (`#rrggbb`; pick a colour with enough contrast on white and, for the dark variant, on near-black), and `CONSOLE_HELP_URL` (`https://`, `http://` or `mailto:`). The logo is served by the API itself, so the console's strict Content-Security-Policy is unchanged. On Kubernetes, mount the logo file into the Pod and set the variables in `config`.
+
 ## Harness controls (1.4.0)
 
 Limits that act without a person watching. All are set per tenant by a platform admin (Tenants page or `PUT /v1/admin/tenants/{id}`); an omitted field is kept, `0` removes a limit.
