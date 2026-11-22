@@ -305,6 +305,7 @@
       try { e = JSON.parse(ev.data); } catch { return; }
       if (e.type === "approval_required") {
         refreshPendingCount();
+        if (has("reviewer")) alertNewApproval(e);
         if (has("reviewer")) toast(e.action && e.action.tool ? `Approval needed: ${e.action.tool}` : "An action is waiting for approval.");
       }
       for (const fn of listeners) { try { fn(e); } catch { /* view gone */ } }
@@ -335,6 +336,24 @@
     const dot = $("#liveDot");
     if (dot) { dot.className = "live" + (on ? " on" : ""); dot.title = on ? "Live updates connected" : "Live updates disconnected"; }
   }
+
+  // A new approval while this tab is in the background: flash the title and, if the reviewer
+  // allowed it, show a desktop notification. Both stop when they come back to the tab.
+  function alertNewApproval(e) {
+    if (!document.hidden) return;
+    state.unseen = (state.unseen || 0) + 1;
+    document.title = `(${state.unseen}) Approval needed · ${brand().name || "Harnis"}`;
+    try {
+      if ("Notification" in window && Notification.permission === "granted") {
+        const tool = e.action && e.action.tool ? e.action.tool : "an action";
+        const n = new Notification("Approval needed", { body: `${e.requested_by || "Someone"} wants to run ${tool}`, tag: "harnis-approval" });
+        n.onclick = () => { window.focus(); location.hash = "#/approvals"; n.close(); };
+      }
+    } catch { /* notifications are optional */ }
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && state.unseen) { state.unseen = 0; document.title = brand().name || "Harnis"; }
+  });
 
   async function refreshPendingCount() {
     if (!has("reviewer")) return;
@@ -447,6 +466,15 @@
     return parts;
   }
 
+  function expiresIn(v) {
+    const s = Math.round((new Date(v).getTime() - Date.now()) / 1000);
+    if (isNaN(s)) return "";
+    if (s <= 0) return "expired";
+    if (s < 3600) return `expires in ${Math.max(1, Math.round(s / 60))} min`;
+    if (s < 86400) return `expires in ${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
+    return `expires in ${Math.floor(s / 86400)} d`;
+  }
+
   function approvalCard(a, { onDone, showSession = true } = {}) {
     const msg = h("span", { class: "small" });
     const decide = async (approved, btn) => {
@@ -470,13 +498,15 @@
         h("strong", { text: a.action.tool }),
         a.status ? statusPill(a.status) : null,
         h("span", { class: "small", text: `requested by ${a.requested_by}` + (a.requested_at ? ` · ${ago(a.requested_at)}` : "") }),
+        a.agent ? h("span", { class: "pill", title: "Agent", text: a.agent }) : null,
         showSession ? h("a", { class: "small", href: `#/chat/${encodeURIComponent(a.session_id)}`, text: "open conversation" }) : null),
+      a.context ? h("div", { class: "why small", title: "What the agent said before asking" }, h("strong", { text: "Agent said: " }), a.context) : null,
       h("div", { class: "body" }, actionDetail(a.action)),
       pending ? h("div", { class: "actions" },
         canApprove ? yes : null,
         (canApprove || own) ? no : null,
         !canApprove ? h("span", { class: "muted small", text: "Waiting for a reviewer to approve." }) : null,
-        a.expires_at ? h("span", { class: "muted small", text: "expires " + fmtTime(a.expires_at) }) : null,
+        a.expires_at ? h("span", { class: "muted small expires", "data-expires": a.expires_at, title: fmtTime(a.expires_at), text: expiresIn(a.expires_at) }) : null,
         msg) : null);
   }
 
@@ -644,19 +674,55 @@
   function viewApprovals(root) {
     let status = "pending";
     const body = h("div", { class: "stack" });
+    let rows = [];
     const tabs = h("div", { class: "row" }, ...["pending", "approved", "denied", "expired"].map((s) =>
       h("button", { class: "btn sm " + (s === status ? "" : "secondary"), "data-status": s, onclick: () => { status = s; load(); } }, s)));
-    root.append(pageHead("Approvals", "Every file change and command an agent proposes waits here for a reviewer. Approvals are bound to the exact action shown."), tabs, h("div", { class: "spacer" }), body);
+    const fAgent = h("select", { id: "fAgent", "aria-label": "Filter by agent", onchange: () => draw() }, h("option", { value: "" }, "All agents"));
+    const fTool = h("select", { id: "fTool", "aria-label": "Filter by tool", onchange: () => draw() }, h("option", { value: "" }, "All tools"));
+    const fSort = h("select", { id: "fSort", "aria-label": "Sort", onchange: () => draw() },
+      h("option", { value: "oldest" }, "Oldest first"), h("option", { value: "newest" }, "Newest first"),
+      h("option", { value: "expiring" }, "Expiring soonest"));
+    const notifyBtn = ("Notification" in window && Notification.permission === "default")
+      ? h("button", { class: "btn sm secondary", id: "enableNotify", onclick: async () => {
+          try { await Notification.requestPermission(); } catch { /* ignore */ }
+          notifyBtn.classList.add("hidden");
+        } }, "Alert me on this device")
+      : null;
+    const filters = h("div", { class: "row filters" }, fAgent, fTool, fSort, h("span", { class: "spacer" }), notifyBtn);
+    root.append(pageHead("Approvals", "Every file change and command an agent proposes waits here for a reviewer. Approvals are bound to the exact action shown."), tabs, h("div", { class: "spacer" }), filters, body);
     body.classList.add("stack");
+    function fillOptions(sel, values, all) {
+      const cur = sel.value;
+      sel.replaceChildren(h("option", { value: "" }, all), ...[...new Set(values.filter(Boolean))].sort().map((v) => h("option", { value: v }, v)));
+      sel.value = values.includes(cur) ? cur : "";
+    }
+    function draw() {
+      const shown = rows.filter((a) => (!fAgent.value || a.agent === fAgent.value) && (!fTool.value || a.action.tool === fTool.value));
+      const t = (a) => new Date(a.requested_at).getTime();
+      shown.sort(fSort.value === "newest" ? (a, b) => t(b) - t(a)
+        : fSort.value === "expiring" ? (a, b) => new Date(a.expires_at) - new Date(b.expires_at) : (a, b) => t(a) - t(b));
+      const none = rows.length && !shown.length ? "No approvals match these filters."
+        : status === "pending" ? "Nothing is waiting for approval." : `No ${status} approvals.`;
+      body.replaceChildren(...(shown.length ? shown.map((a) => approvalCard(a, { onDone: load })) : [h("div", { class: "card empty", text: none })]));
+    }
     async function load() {
       for (const b of tabs.children) b.className = "btn sm " + (b.dataset.status === status ? "" : "secondary");
       try {
-        const rows = await api("GET", "/v1/approvals?status=" + status);
-        body.replaceChildren(...(rows.length ? rows.map((a) => approvalCard(a, { onDone: load }))
-          : [h("div", { class: "card empty", text: status === "pending" ? "Nothing is waiting for approval." : `No ${status} approvals.` })]));
+        rows = await api("GET", "/v1/approvals?status=" + status);
+        fillOptions(fAgent, rows.map((a) => a.agent), "All agents");
+        fillOptions(fTool, rows.map((a) => a.action.tool), "All tools");
+        draw();
       } catch (e) { body.replaceChildren(errorBox(e)); }
     }
     listeners.add((e) => { if (e.type === "approval_required" && status === "pending") load(); });
+    // Keep the "expires in" text current; stop once this page is gone.
+    const tick = setInterval(() => {
+      if (!root.isConnected) { clearInterval(tick); return; }
+      for (const el of body.querySelectorAll(".expires")) {
+        el.textContent = expiresIn(el.dataset.expires);
+        el.classList.toggle("soon", new Date(el.dataset.expires) - Date.now() < 10 * 60 * 1000);
+      }
+    }, 15000);
     body.style.setProperty("margin-top", "12px");
     load();
   }

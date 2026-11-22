@@ -87,12 +87,21 @@ class PgStore:
     def list_approvals(self, tenant_id: str, status: str = "pending") -> list[dict[str, Any]]:
         with self._tx(tenant_id) as conn:
             rows = conn.execute(
-                "SELECT approval_id, session_id, requested_by, action, action_hash, status, requested_at, expires_at"
-                " FROM approvals WHERE status = %s"
-                " AND (status <> 'pending' OR expires_at > now())"
-                " ORDER BY requested_at", (status,)).fetchall()
+                "SELECT a.approval_id, a.session_id, a.requested_by, a.action, a.action_hash, a.status,"
+                " a.requested_at, a.expires_at, a.decided_by, a.decided_at,"
+                " s.state->>'agent' AS agent, s.state->'messages'->-1 AS last_message"
+                " FROM approvals a LEFT JOIN sessions s ON s.session_id = a.session_id"
+                " WHERE a.status = %s AND (a.status <> 'pending' OR a.expires_at > now())"
+                " ORDER BY a.requested_at LIMIT 500", (status,)).fetchall()
         for r in rows:
             r["approval_id"] = str(r["approval_id"])
+            # What the agent said just before asking: the nearest thing to a stated reason.
+            msg = r.pop("last_message", None)
+            text = ""
+            if isinstance(msg, dict) and msg.get("role") == "assistant":
+                text = " ".join(b.get("text", "") for b in msg.get("content", [])
+                                if isinstance(b, dict) and b.get("type") == "text").strip()
+            r["context"] = text[:400] or None
         return rows
 
     def get_approval(self, tenant_id: str, approval_id: str) -> dict[str, Any] | None:

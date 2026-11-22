@@ -6,6 +6,7 @@ sign-on (authorization code + PKCE) against a small fake identity provider.
 
 Every test also fails on browser console errors, which is how Content-Security-
 Policy violations show up."""
+import re
 import base64
 import hashlib
 import json
@@ -430,7 +431,7 @@ def test_company_branding_replaces_name_logo_colour_and_adds_help(page, tmp_path
                      console_accent="#b3261e", console_help_url="https://it.acme.example/help")
     with serve(app) as url:
         page.goto(url + "/")
-        assert page.title() == "Acme AI"
+        expect(page).to_have_title("Acme AI")  # set once the public config has loaded
         expect(page.locator(".signin .brand")).to_contain_text("Acme AI")
         expect(page.locator(".signin .brand img.logo")).to_be_visible()
         assert page.evaluate("img => img.naturalWidth", page.locator(".signin .brand img.logo").element_handle()) > 0
@@ -446,5 +447,36 @@ def test_company_branding_replaces_name_logo_colour_and_adds_help(page, tmp_path
 def test_default_console_keeps_the_harnis_brand(page, tmp_path, app_pool, redis_client):
     with serve(harnis_app(tmp_path, app_pool, redis_client)) as url:
         page.goto(url + "/")
-        assert page.title() == "Harnis"
+        sync_api.expect(page).to_have_title("Harnis")
         assert page.request.get(url + "/console/logo").status == 404
+
+
+def test_approvals_queue_filters_countdown_and_background_alert(page, tmp_path, app_pool, redis_client):
+    expect = sync_api.expect
+    with serve(harnis_app(tmp_path, app_pool, redis_client)) as url:
+        page.goto(url + "/")
+        page.click("#devToken")
+        page.click("#newSession")
+        # The tab is in the background when the approval arrives.
+        page.evaluate("Object.defineProperty(document, 'hidden', {configurable: true, get: () => true})")
+        page.fill("#messageInput", "create calc.py")
+        page.click("#sendBtn")
+        expect(page.locator(".approval").first).to_contain_text("write_file")
+        expect(page).to_have_title(re.compile(r"^\(1\) Approval needed"))
+        page.evaluate("Object.defineProperty(document, 'hidden', {configurable: true, get: () => false});"
+                      "document.dispatchEvent(new Event('visibilitychange'))")
+        expect(page).to_have_title("Harnis")
+
+        page.click('.nav a[href="#/approvals"]')
+        card = page.locator(".approval").first
+        expect(card).to_contain_text("write_file")
+        expect(card.locator(".pill", has_text="coder")).to_be_visible()      # which agent asked
+        expect(card.locator(".expires")).to_contain_text("expires in")        # countdown, not a date
+        # Other tests leave approvals in this tenant, so check what the filters do, not how many there are.
+        tools = lambda: set(page.locator(".approval .head strong").all_inner_texts())  # noqa: E731
+        page.select_option("#fTool", "write_file")
+        assert tools() == {"write_file"}
+        page.select_option("#fAgent", "coder")
+        assert tools() == {"write_file"}
+        page.select_option("#fSort", "expiring")
+        expect(page.locator(".approval").first).to_contain_text("write_file")
