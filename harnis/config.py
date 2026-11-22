@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://harnis_app:harnis_app@127.0.0.1:5432/harnis"
     migration_database_url: str = "postgresql://postgres:postgres@127.0.0.1:5432/harnis"
     app_db_password: str = "harnis_app"
+    # Optional separate database login for platform administration (tenants, controls, trip wires, tenant
+    # deletion). Leave PLATFORM_DATABASE_URL empty to keep using the app login. To enforce the separation
+    # in the database, set both, run migrations, then `python -m harnis.migrate platform-role enforce`.
+    platform_database_url: str = ""
+    platform_db_password: str = ""
     # PostgreSQL driver: "pgtern" (default, Apache-2.0) or "psycopg" (LGPL-3.0,
     # needs `pip install "harnis[psycopg]"`).
     db_driver: Literal["pgtern", "psycopg"] = "pgtern"

@@ -58,6 +58,16 @@ An install can only change `.harnis/deps`: anything else the package code writes
 
 **Plugins and the database.** The data lifecycle functions (erasure, tenant deletion) are callable by the application's database role; the API decides who may call them. Plugins run inside the API process with that role, so review plugins like your own code.
 
+## Separating platform administration (optional)
+
+By default one database login (`harnis_app`) serves everything, and platform operations (creating, disabling and deleting tenants, per-tenant controls, clearing a trip wire) are guarded in the API and, for tenant deletion and trip clearing, refused when a tenant is selected on the connection. For defence in depth you can give those operations their own login so that the application login cannot run them at all:
+
+1. Set `PLATFORM_DB_PASSWORD` where the migrations run (Helm: `externalDatabase.platformPassword`) and run them. This gives the `harnis_platform_ops` role a login.
+2. Give the API `PLATFORM_DATABASE_URL`, for example `postgresql://harnis_platform_ops:...@host:5432/harnis`. Platform requests then use it; everything else keeps using `DATABASE_URL`.
+3. Check that platform pages and calls still work, then run `python -m harnis.migrate platform-role enforce` as the owner. `status` shows the current state; `relax` reverts it.
+
+Once enforced, if `PLATFORM_DATABASE_URL` is missing the platform pages fail with a permission error rather than silently using the wrong login. The platform login sees no tenant data directly: it can only run the platform functions and read and write the platform audit log.
+
 ## Personal data: retention, export, erasure
 
 **Retention** (applied hourly by the maintenance job):

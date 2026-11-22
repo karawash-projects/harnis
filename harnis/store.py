@@ -22,8 +22,9 @@ class ApprovalError(Exception):
 
 
 class PgStore:
-    def __init__(self, pool=None, approval_ttl_seconds: int = 3600):
+    def __init__(self, pool=None, approval_ttl_seconds: int = 3600, platform_pool=None):
         self.pool = pool
+        self._platform_admin_pool = platform_pool
         self.approval_ttl = approval_ttl_seconds
         self._policy_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
@@ -374,6 +375,13 @@ class PgStore:
         from .db import get_pool
         return (self.pool or get_pool()).connection()
 
+    def _platform_admin(self):
+        """Connection for platform administration (tenants, controls, trip wires, deletion). It uses the
+        separate platform login when PLATFORM_DATABASE_URL is set, otherwise the application login."""
+        from .db import get_platform_pool
+        pool = self._platform_admin_pool or get_platform_pool()
+        return pool.connection() if pool is not None else self._platform()
+
     def resolve_api_key(self, key_id: str) -> dict[str, Any] | None:
         with self._platform() as conn:
             return conn.execute("SELECT * FROM harnis_resolve_api_key(%s)", (key_id,)).fetchone()
@@ -409,14 +417,14 @@ class PgStore:
 
     # -- platform administration ---------------------------------------------------
     def admin_list_tenants(self) -> list[dict[str, Any]]:
-        with self._platform() as conn:
+        with self._platform_admin() as conn:
             rows = conn.execute("SELECT * FROM harnis_admin_list_tenants()").fetchall()
         keys = ("max_cost_usd_per_turn", "max_cost_usd_per_day", "max_cost_usd_per_month")
         return [{**r, **{k: float(r[k]) if r[k] is not None else None for k in keys}} for r in rows]
 
     def admin_set_tenant_controls(self, tenant_id: str, max_day: float | None, max_month: float | None,
                                   max_seconds: int | None, require_tests: bool | None, actor: str) -> None:
-        with self._platform() as conn:
+        with self._platform_admin() as conn:
             conn.execute("SELECT harnis_admin_set_tenant_controls(%s::text, %s::numeric, %s::numeric,"
                          " %s::integer, %s::boolean, %s::text)",
                          (tenant_id, max_day, max_month, max_seconds, require_tests, actor))
@@ -424,14 +432,14 @@ class PgStore:
         self._policy_cache.pop(tenant_id, None)
 
     def admin_clear_trip(self, tenant_id: str, actor: str) -> None:
-        with self._platform() as conn:
+        with self._platform_admin() as conn:
             conn.execute("SELECT harnis_admin_clear_trip(%s::text, %s::text)", (tenant_id, actor))
             conn.commit()
         self._policy_cache.pop(tenant_id, None)
 
     def admin_upsert_tenant(self, tenant_id: str, name: str | None, allowed_providers: list[str] | None,
                             max_cost: float | None, active: bool | None, actor: str) -> None:
-        with self._platform() as conn:
+        with self._platform_admin() as conn:
             conn.execute("SELECT harnis_admin_upsert_tenant(%s::text, %s::text, %s::text[], %s::numeric, %s::boolean, %s::text)",
                          (tenant_id, name, allowed_providers, max_cost, active, actor))
             conn.commit()
@@ -491,7 +499,7 @@ class PgStore:
     def delete_tenant(self, tenant_id: str, actor: str) -> dict[str, Any] | None:
         """Deletes a disabled tenant and all its data. Raises ValueError if it is active."""
 
-        with self._platform() as conn:
+        with self._platform_admin() as conn:
             try:
                 with conn.transaction():
                     r = conn.execute("SELECT harnis_delete_tenant(%s) AS r", (tenant_id,)).fetchone()["r"]
@@ -509,7 +517,7 @@ class PgStore:
         return row["created_by"] if row else None
 
     def platform_events(self, limit: int = 200) -> list[dict[str, Any]]:
-        with self._platform() as conn:
+        with self._platform_admin() as conn:
             return conn.execute("SELECT * FROM platform_audit ORDER BY event_id DESC LIMIT %s", (limit,)).fetchall()
 
 

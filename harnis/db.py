@@ -34,8 +34,25 @@ def get_pool() -> pg.ConnectionPool:
     return _pool
 
 
+_platform_pool: pg.ConnectionPool | None = None
+
+
+def get_platform_pool() -> pg.ConnectionPool | None:
+    """Pool for the separate platform-administration login, or None when PLATFORM_DATABASE_URL is unset."""
+    global _platform_pool
+    url = get_settings().platform_database_url
+    if not url:
+        return None
+    if _platform_pool is None:
+        _platform_pool = pg.ConnectionPool(url, min_size=0, max_size=4, kwargs={"row_factory": pg.dict_row}, open=True)
+    return _platform_pool
+
+
 def close_pool() -> None:
-    global _pool
+    global _pool, _platform_pool
+    if _platform_pool is not None:
+        _platform_pool.close()
+        _platform_pool = None
     if _pool is not None:
         _pool.close()
         _pool = None
