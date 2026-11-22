@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-22
+
+### Added
+- **Collapsible menu** in the console: a menu button in the top bar (remembered on wide screens; closed by default on phones, closes after you pick a page, Escape closes it).
+- **Keyboard and screen-reader pass**: a "Skip to content" link, a visible focus outline on every control, the current page marked in the menu, focus moved to the page after navigating, and no more announcing the whole page on every change. Reduced-motion preference is respected.
+- Narrow screens: the menu becomes a vertical list, larger touch targets, no sideways scrolling in the main views.
+- Browser tests check that every visible control has an accessible name and that the main views do not scroll sideways at 375 px.
+
 ## [1.9.0] - 2026-11-22
 
 ### Added

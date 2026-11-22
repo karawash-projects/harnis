@@ -95,6 +95,12 @@ input[type=text], input[type=number], input[type=password], textarea, select {
   width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
   background: var(--surface); outline: none;
 }
+a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.content:focus { outline: none; }
+.skip { position: absolute; left: 8px; top: -48px; z-index: 50; padding: 8px 14px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); text-decoration: none; }
+.skip:focus { top: 8px; }
+.menu-btn { font-size: 18px; line-height: 1; min-width: 36px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 input:focus, textarea:focus, select:focus, .btn:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 textarea { resize: vertical; }
 label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
@@ -149,6 +155,8 @@ details[open] summary { margin-bottom: 10px; }
 .topbar .who .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 .live { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .live.on { background: var(--ok); }
+.shell.nav-closed { grid-template-columns: 0 1fr; }
+.shell.nav-closed .nav { display: none; }
 .nav { border-right: 1px solid var(--line); padding: 12px 8px; display: flex; flex-direction: column; gap: 2px; overflow: auto; }
 .nav .section { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 14px 10px 4px; }
 .nav a {
@@ -222,10 +230,13 @@ td .detail { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-
 
 /* -- small screens ------------------------------------------------------- */
 @media (max-width: 860px) {
-  .shell { grid-template-columns: 1fr; grid-template-rows: 56px auto 1fr; }
-  .nav { flex-direction: row; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; padding: 6px 8px; }
-  .nav .section { display: none; }
-  .nav a { white-space: nowrap; }
+  .shell, .shell.nav-closed { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; height: auto; min-height: 100vh; }
+  .topbar { flex-wrap: wrap; padding: 8px 12px; row-gap: 6px; }
+  .topbar .pill[title="Tenant"] { display: none; }
+  .nav { flex-direction: column; border-right: 0; border-bottom: 1px solid var(--line); max-height: 60vh; padding: 6px 8px; }
+  .nav a { padding: 11px 12px; }
+  .btn, .btn.sm, input[type=text], select { min-height: 40px; }
+  .page-head { gap: 8px; }
   .content { padding: 16px; }
   .chat { grid-template-columns: 1fr; height: auto; }
   .sessions { max-height: 240px; }
