@@ -102,6 +102,7 @@ def session_view(rec: SessionRecord) -> dict[str, Any]:
                 msgs.append({"role": "tool_call", "text": b["name"]})
     return {"session_id": rec.session_id, "status": rec.status, "agent": rec.state.get("agent"),
             "reply": rec.state.get("reply"), "awaiting": rec.state.get("awaiting"),
+            "escalation": rec.state.get("escalation") if rec.status in ("escalated", "failed") else None,
             "flags": rec.state.get("flags", []), "messages": msgs[-50:], "version": rec.version,
             "turn": {k: rec.state.get("turn", {}).get(k) for k in
                      ("steps", "cost_usd", "tool_calls", "handoffs", "cache_hit", "loop_trips")}}

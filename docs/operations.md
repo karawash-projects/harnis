@@ -145,6 +145,10 @@ Reviewers can filter the queue by agent and tool, sort by age or by time left, a
 
 Usage & analytics shows, for 7, 30 or 90 days: spend by user and by agent (admins; `GET /v1/admin/spend`) and approval statistics (reviewers; `GET /v1/approval-stats`): counts, approval rate, median and 90th-percentile time from request to decision, and a per-tool breakdown. The token ledger records no user or agent, so spend is attributed through the conversation (its owner and the agent it ended on); calls from conversations deleted by retention or erasure appear as "(erased or expired)". Harnis has no teams, so there is no per-team view. The audit log can be filtered by user and date range (`actor`, `since`, `until`), including in the NDJSON export.
 
+## Handover summary
+
+When an agent asks for a person (`escalate_to_human`), or a turn stops because of a loop, a suspected injected instruction, failing tests or a budget, Harnis builds a short summary for whoever takes over and shows it in the conversation: what was asked, what happened, files written, recent actions, test status, cost, and next steps for that kind of stop. The API returns it as `escalation` on the conversation (`GET /v1/sessions/{id}`) while the conversation is escalated or failed, and the alert carries the agent, files written, test status and cost. It lists tool names and what they touched (paths, a command's first word), never file contents or command text. Sending a new message in the conversation clears it.
+
 ## Path policy
 
 Some files should never be touched by an agent: CI workflows, deployment files, key material, `.env` files. Set `PATH_POLICY_FILE` to a TOML file (start from `examples/path-policy.toml`):
