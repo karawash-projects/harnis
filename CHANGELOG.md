@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-11-24
+
+### Added
+- **Trace timeline**: a **Trace** panel in each conversation shows every model call (model, tokens, cost), tool call and approval wait of a turn as bars on a timeline, and `GET /v1/sessions/{id}/trace` returns it (owner and reviewers; last 10 turns, 60 steps each). It never records file contents or command text.
+- **Research tools** (official plugin, `PLUGINS=harnis.research`): `web_fetch` for the sites in `RESEARCH_ALLOW_DOMAINS` (HTTPS only; every request and redirect checked against the list; names must resolve to public addresses and the connection goes to the checked address; size, time and content-type caps) and `web_search` against a SearxNG-compatible endpoint in `SEARCH_URL`, plus a `researcher` agent that ends with a Sources list. Nothing is registered unless you set one of the two. Results are fenced and screened as untrusted data. You are responsible for the licences and terms of what you allow.
+- **Scheduled tasks**: send a message to an agent every N minutes, daily or on chosen weekdays (time zone aware), as the person who created it. New **Schedules** page and `/v1/schedules` API (create, list, change, delete, run now). Runs are ordinary conversations, so approvals, budgets and the path policy still apply; a run that reaches an approval stops there and expires as usual, the next run is skipped while the previous one is still waiting, and after downtime a task runs once. Off until `SCHEDULER_ENABLED=true`. Limits: `SCHEDULE_MIN_INTERVAL_MINUTES` (15), `SCHEDULE_MAX_PER_USER` (10). Audited; erased with the user and listed in their export.
+- Migration `014_scheduled_tasks.sql` (table with forced row-level security, one claim function).
+
 ## [1.15.0] - 2026-11-22
 
 ### Added

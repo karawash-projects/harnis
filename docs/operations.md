@@ -163,6 +163,39 @@ Patterns match the workspace-relative path without regard to case: `*` stays wit
 
 **What it does not cover.** The policy governs the file tools (`read_file`, `write_file`, `list_files`). A command run with `run_command`, and a dependency install, execute inside the sandbox and can change files there; they are controlled by the reviewer's approval of the exact command, the sandbox itself, and `REQUIRE_TESTS`. Treat the policy as a guard against an agent editing the wrong files, not as a second sandbox.
 
+## Trace timeline
+
+Open a conversation and choose **Trace** to see what each turn did and how long it took: every model call (model, tokens, cost), every tool call (the tool and what it touched), and every wait for an approval, as bars on a timeline. The API returns the same data at `GET /v1/sessions/{id}/trace` (`?turn=N` picks a turn; the owner and reviewers can read it). The last 10 turns are kept in the conversation, up to 60 steps each. Like the handover summary, a trace never holds file contents or command text.
+
+## Scheduled tasks
+
+A scheduled task sends a message to an agent on a schedule, as the person who created it (**Schedules** in the console, or `/v1/schedules`). Turn it on with `SCHEDULER_ENABLED=true` on the API and/or the workers; several can run at once, and a task is claimed by one of them at a time.
+
+Nobody watches a scheduled run, so the design assumes nobody will approve anything in the moment:
+
+- A scheduled run is an ordinary conversation, so budgets, the path policy and every approval apply unchanged. A run that reaches an approval stops there, the request appears in Approvals and expires after the usual time.
+- While the previous run is still working or waiting for an approval, the next run is skipped and recorded as `schedule_run_skipped`. After the approval expires the conversation is released and the following run goes ahead.
+- After downtime a task runs once, not once for every missed time. Runs are skipped while the organization is disabled.
+- Limits: `SCHEDULE_MIN_INTERVAL_MINUTES` (default 15) and `SCHEDULE_MAX_PER_USER` (default 10). Schedules are every N minutes, daily at a time, or on chosen weekdays at a time, in an IANA time zone that follows daylight saving.
+- Creating, changing, deleting and starting a run are in the audit log (`schedule_created`, `schedule_updated`, `schedule_deleted`, `schedule_run_started`). Erasing a user deletes their tasks, and the user export lists them. Admins can list all tasks (`?all=1`) and delete any of them through the API.
+
+A task keeps running with its owner's identity, not their role at the time, so remove tasks of people who leave (erasing the user does this). Give schedule messages that need a reviewer a reviewer who watches Approvals.
+
+## Research tools
+
+Agents have no web access by default. The research plugin adds read-only web tools under rules you set. Load it with `PLUGINS=harnis.research` (alongside any others) and name what it may use:
+
+```bash
+PLUGINS=harnis.research
+RESEARCH_ALLOW_DOMAINS=docs.python.org,*.wikipedia.org     # sites agents may read; names only
+SEARCH_URL=https://search.example.com/search                 # optional: a SearxNG-compatible JSON search endpoint
+```
+
+- `web_fetch` exists only when `RESEARCH_ALLOW_DOMAINS` is set. HTTPS only, standard port, no credentials in the address. Every request and every redirect is checked against the list, a name must resolve to public addresses only (no loopback, private, link-local or metadata addresses), and the connection goes to the address that was checked. Responses are capped at 1 MB and 15 seconds, text/HTML/JSON only, and 20,000 characters of text reach the model.
+- `web_search` exists only when `SEARCH_URL` is set; it returns titles, links and snippets from a service you run or pay for. Reading a result still goes through `web_fetch`, so a search can't widen what agents may read.
+- Both tools return untrusted data: fenced and scanned for injected instructions, like file contents. A `researcher` agent uses them and ends with a Sources list. With neither setting, no tools or agent are registered.
+- You are responsible for the licences and terms of the sites and the search service you allow.
+
 ## Console accessibility
 
 The console has a skip link, visible keyboard focus, a collapsible menu and a phone layout, and its tests check that controls have names and that main views fit a 375 px screen. This is not a formal accessibility audit or a WCAG conformance claim; run your own assessment (screen readers, contrast with your brand colours) before relying on it for compliance.

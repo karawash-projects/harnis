@@ -185,6 +185,12 @@ config:
   # Path policy (see docs/operations.md): which files agents may read or write. The file is inside the Pod:
   # mount a ConfigMap with api.extraVolumes/extraVolumeMounts and point PATH_POLICY_FILE at it. Workers use the API's settings.
   # PATH_POLICY_FILE: "/policy/path-policy.toml"
+  # Scheduled tasks (see docs/operations.md): run due tasks as their owners; each run still waits for approvals.
+  # SCHEDULER_ENABLED: "true"
+  # Governed research tools (see docs/operations.md): off unless you name the sites agents may read.
+  # PLUGINS: "harnis.research"
+  # RESEARCH_ALLOW_DOMAINS: "docs.python.org,*.wikipedia.org"
+  # SEARCH_URL: "https://search.example.com/search"
 
 # -----------------------------------------------------------------------------
 # Secrets
