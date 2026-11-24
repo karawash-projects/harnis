@@ -428,6 +428,18 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
     def get_session(session_id: str, p: Principal = Depends(current_principal)) -> dict[str, Any]:
         return view(load_owned(p, session_id))
 
+    @app.get("/v1/sessions/{session_id}/trace")
+    def get_trace(session_id: str, turn: int | None = None,
+                  p: Principal = Depends(current_principal)) -> dict[str, Any]:
+        """Timeline of the recent turns: model calls, tool calls and approval waits, with timing.
+        No contents or command text. The owner and reviewers can read it."""
+        rec = load_owned(p, session_id)
+        entries = list(rec.state.get("trace", []))
+        turns = sorted({e["turn"] for e in entries})
+        pick = turn if turn is not None else (turns[-1] if turns else None)
+        return {"session_id": rec.session_id, "turns": turns, "turn": pick,
+                "entries": [e for e in entries if e["turn"] == pick]}
+
     @app.get("/v1/sessions/{session_id}/files")
     def get_files(session_id: str, p: Principal = Depends(current_principal)) -> dict[str, str]:
         rec = load_owned(p, session_id)

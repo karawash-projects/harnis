@@ -46,6 +46,8 @@ tracer = trace.get_tracer("harnis.orchestrator")
 
 END = "END"
 SUSPEND = "SUSPEND"
+TRACE_TURNS = 10          # turns whose timeline is kept in the session
+TRACE_MAX_PER_TURN = 60   # steps recorded per turn
 
 TRUNCATED_NUDGE = ("Your last response was cut off by the output limit, and any tool call in it was "
                    "discarded. Continue from where you stopped, in smaller steps (for a large file, "
@@ -252,6 +254,7 @@ class Orchestrator:
                       "used_tools": False, "loop_trips": 0, "cache_hit": False,
                       "started_at": time.time()}
         st["reply"] = None
+        st["turn_no"] = st.get("turn_no", 0) + 1
         st.pop("escalation", None)  # the handover summary belongs to the turn that produced it
         st["loop_fingerprints"] = []
         rec.status = "running"
@@ -331,6 +334,23 @@ class Orchestrator:
     def _checkpoint(self, rec: SessionRecord) -> None:
         with tracer.start_as_current_span("harnis.db.checkpoint"):
             rec.version = self.d.store.save_checkpoint(rec)
+
+    @staticmethod
+    def _trace(st: dict[str, Any], kind: str, started: float, duration: float, **fields: Any) -> None:
+        """One step of the turn timeline: what ran, when (seconds from the start of the turn) and how long.
+        Like the handover summary it never holds contents or command text. Kept for the last few turns."""
+        turn = st.get("turn") or {}
+        no = st.get("turn_no", 0)
+        entry = {"turn": no, "kind": kind, "t": round(max(started - turn.get("started_at", started), 0.0), 3),
+                 "d": round(max(duration, 0.0), 3)}
+        entry.update({k: v for k, v in fields.items() if v is not None})
+        trace = st.setdefault("trace", [])
+        if sum(1 for e in trace if e["turn"] == no) < TRACE_MAX_PER_TURN:
+            trace.append(entry)
+        keep = {e["turn"] for e in trace}
+        if len(keep) > TRACE_TURNS:
+            oldest = sorted(keep)[:-TRACE_TURNS]
+            st["trace"] = [e for e in trace if e["turn"] not in oldest]
 
     @staticmethod
     def _note_action(turn: dict[str, Any], name: str, args: dict[str, Any], is_error: bool) -> None:
@@ -561,6 +581,7 @@ class Orchestrator:
             if call["id"] in done:
                 continue
             name, args = call["name"], call.get("input") or {}
+            call_started = time.time()
 
             def result(text: str, is_error: bool = False, *, untrusted: bool = False) -> None:
                 if untrusted:
@@ -574,6 +595,9 @@ class Orchestrator:
                 st["tool_results"].append({"type": "tool_result", "tool_use_id": call["id"],
                                            "content": text, "is_error": is_error})
                 self._note_action(turn, name, args, is_error)
+                last = turn["actions"][-1]
+                self._trace(st, "tool", call_started, time.time() - call_started,
+                            tool=name, target=last["target"], ok=not is_error)
                 self.d.publish(rec.tenant_id, f"user:{rec.user_id}",
                                {"type": "tool_result", "session_id": rec.session_id, "tool": name,
                                 "is_error": is_error, "preview": text[:300]})
@@ -663,6 +687,9 @@ class Orchestrator:
                 aw, dec = st.get("awaiting"), st.get("approval_decision")
                 if aw and aw["tool_use_id"] == call["id"] and dec:
                     st["awaiting"], st["approval_decision"] = None, None
+                    if aw.get("requested_at"):
+                        self._trace(st, "approval", aw["requested_at"], time.time() - aw["requested_at"],
+                                    tool=name, ok=bool(dec["approved"]))
                     if not dec["approved"]:
                         result(f"the reviewer denied this action ({dec['decided_by']}). Do not retry it "
                                "unchanged; ask the user how to proceed.", True)
@@ -677,7 +704,8 @@ class Orchestrator:
                                        {"tool": name, "action_hash": h})
                 else:
                     approval_id = self.d.store.create_approval(rec.tenant_id, rec.session_id, rec.user_id, action, h)
-                    st["awaiting"] = {"approval_id": approval_id, "tool_use_id": call["id"], "action_hash": h}
+                    st["awaiting"] = {"approval_id": approval_id, "tool_use_id": call["id"], "action_hash": h,
+                                     "requested_at": time.time()}
                     rec.status = "awaiting_approval"
                     metrics.APPROVALS_REQUESTED.labels(metrics.safe(name)).inc()
                     st["reply"] = f"Waiting for a reviewer to approve `{name}`."
@@ -806,6 +834,7 @@ class Orchestrator:
         allowed = self.d.store.tenant_policy(rec.tenant_id).get("allowed_providers")
         if allowed is not None and "*" in allowed:
             allowed = None  # every configured provider
+        started = time.time()
         try:
             resp = self.d.router.complete(req, allowed=allowed)
         except (AllProvidersFailed, ProviderError) as exc:
@@ -814,6 +843,9 @@ class Orchestrator:
             return None
         cost = cost_usd(resp.model, resp.usage.input_tokens, resp.usage.output_tokens)
         rec.state["turn"]["cost_usd"] = round(rec.state["turn"]["cost_usd"] + cost, 6)
+        self._trace(rec.state, "model", started, time.time() - started, model=resp.model,
+                    in_tokens=resp.usage.input_tokens, out_tokens=resp.usage.output_tokens,
+                    cost=round(cost, 6), stop=resp.stop_reason, agent=rec.state.get("agent"))
         self.d.store.record_usage(rec.tenant_id, rec.session_id, resp.provider, resp.model,
                                   resp.usage.input_tokens, resp.usage.output_tokens, cost)
         return resp

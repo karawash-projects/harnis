@@ -247,3 +247,12 @@ td .detail { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-
 .handover { align-self: stretch; margin: 8px 0; padding: 12px 14px; }
 .handover h3 { margin: 0 0 8px; }
 .handover .row { gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 4px; }
+
+.trace { padding: 8px 12px; border-top: 1px solid var(--line); max-height: 280px; overflow: auto; }
+.trace-row { display: grid; grid-template-columns: minmax(120px, 38%) 1fr auto; gap: 8px; align-items: center; margin: 3px 0; }
+.trace-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track { position: relative; height: 10px; background: var(--code); border-radius: 5px; }
+.bar { position: absolute; top: 0; bottom: 0; border-radius: 5px; background: var(--accent); }
+.bar.tool { opacity: .65; }
+.bar.approval { background: var(--warn, #b7791f); }
+.bar.bad { background: var(--danger, #c53030); }

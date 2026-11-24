@@ -546,6 +546,7 @@
     const messages = h("div", { class: "messages", id: "messages" });
     const head = h("div", { class: "conv-head" });
     const filesBox = h("div", { class: "files hidden" });
+    const traceBox = h("div", { class: "trace hidden", id: "traceBox" });
     const input = h("textarea", { id: "messageInput", rows: "1", placeholder: "Message the agents. Try: create calc.py with an add function" });
     const send = h("button", { class: "btn", id: "sendBtn" }, "Send");
     let busy = false;
@@ -555,7 +556,7 @@
         h("div", { class: "conv-head" }, h("h3", { text: "Conversations" }), h("span", { class: "spacer" }),
           h("button", { class: "btn sm", id: "newSession", onclick: () => newSession() }, "New")),
         list),
-      h("div", { class: "card conv" }, head, messages, filesBox,
+      h("div", { class: "card conv" }, head, messages, filesBox, traceBox,
         h("div", { class: "composer" }, input, send))));
 
     async function loadList() {
@@ -576,6 +577,7 @@
       history.replaceState(null, "", "#/chat/" + encodeURIComponent(id));
       for (const b of list.querySelectorAll(".item")) b.classList.toggle("active", b.dataset.session === id);
       filesBox.classList.add("hidden");
+      traceBox.classList.add("hidden");
       if (load) refresh();
     }
 
@@ -596,6 +598,7 @@
         statusPill(v.status), v.agent ? h("span", { class: "pill", text: "agent: " + v.agent }) : null,
         h("span", { class: "spacer" }),
         t.steps != null ? h("span", { class: "muted small", text: `${plural(t.steps, "step")} · ${plural(t.tool_calls || 0, "tool call")} · ${money(t.cost_usd)}${t.cache_hit ? " · cached" : ""}` }) : null,
+        h("button", { class: "btn ghost sm", id: "traceBtn", onclick: toggleTrace }, "Trace"),
         h("button", { class: "btn ghost sm", id: "filesBtn", onclick: toggleFiles }, "Files"));
       const nodes = [];
       for (const m of v.messages) {
@@ -648,10 +651,44 @@
         renderView(await api("GET", "/v1/sessions/" + encodeURIComponent(current)));
         store.set("session", current);
         if (!filesBox.classList.contains("hidden")) loadFiles();
+        if (!traceBox.classList.contains("hidden")) loadTrace();
       } catch (e) {
         if (e.status === 404) { store.del("session"); current = ""; refresh(); return; }
         messages.replaceChildren(errorBox(e));
       }
+    }
+
+    // Timeline of one turn: each step is a bar placed by start time and sized by duration.
+    async function loadTrace(turn) {
+      try {
+        const q = turn != null ? "?turn=" + turn : "";
+        const tr = await api("GET", `/v1/sessions/${encodeURIComponent(current)}/trace${q}`);
+        const es = tr.entries || [];
+        const total = Math.max(0.001, ...es.map((e) => e.t + e.d));
+        const label = (e) => e.kind === "model" ? `model ${e.model || ""} · ${e.in_tokens || 0}→${e.out_tokens || 0} tokens · ${money(e.cost)}`
+          : e.kind === "approval" ? `approval wait · ${e.ok ? "approved" : "denied"} · ${e.tool}`
+          : `${e.ok ? "✓" : "✗"} ${e.tool}${e.target ? " " + e.target : ""}`;
+        const rows = es.map((e) => {
+          const bar = h("span", { class: "bar " + e.kind + (e.ok === false ? " bad" : "") });
+          bar.style.setProperty("left", (100 * e.t / total).toFixed(2) + "%");
+          bar.style.setProperty("width", Math.max(0.8, 100 * e.d / total).toFixed(2) + "%");
+          return h("div", { class: "trace-row" },
+            h("span", { class: "trace-label mono small", text: label(e) }),
+            h("span", { class: "track" }, bar),
+            h("span", { class: "muted small", text: e.d.toFixed(2) + " s" }));
+        });
+        const picker = (tr.turns || []).length > 1
+          ? h("span", {}, ...tr.turns.map((n) => h("button", { class: "btn ghost sm" + (n === tr.turn ? " active" : ""),
+              onclick: () => loadTrace(n) }, "turn " + n))) : null;
+        traceBox.replaceChildren(h("div", { class: "row" }, h("h3", { text: "Trace" }),
+          h("span", { class: "muted small", text: es.length ? `${plural(es.length, "step")} · ${total.toFixed(1)} s` : "nothing recorded yet" }), picker),
+          ...rows);
+      } catch (e) { traceBox.replaceChildren(errorBox(e)); }
+    }
+    function toggleTrace() {
+      if (!current) return;
+      traceBox.classList.toggle("hidden");
+      if (!traceBox.classList.contains("hidden")) loadTrace();
     }
 
     async function loadFiles() {
