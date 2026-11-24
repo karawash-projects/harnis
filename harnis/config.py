@@ -178,6 +178,10 @@ class Settings(BaseSettings):
     # install_dependencies installs wheels only, so no package runs code while it installs. Set true to also
     # allow building source distributions (some packages publish no wheel); they run their build scripts.
     pip_allow_sdists: bool = False
+    # Governed research (PLUGINS=harnis.research): sites agents may read ("example.com,*.example.org")
+    # and an optional SearxNG-compatible JSON search endpoint. Both empty = no research tools.
+    research_allow_domains: str = ""
+    search_url: str = ""
     # TOML file limiting which workspace files agents may read or write (see harnis/pathpolicy.py). Empty = no limits.
     path_policy_file: str = ""
     # "copy" streams the workspace in and out through the Docker API and works
