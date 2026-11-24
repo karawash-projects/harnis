@@ -178,6 +178,11 @@ class Settings(BaseSettings):
     # install_dependencies installs wheels only, so no package runs code while it installs. Set true to also
     # allow building source distributions (some packages publish no wheel); they run their build scripts.
     pip_allow_sdists: bool = False
+    # Scheduled tasks: a scheduler thread in the API (and in workers) runs due tasks as their owners.
+    scheduler_enabled: bool = False
+    scheduler_poll_seconds: int = 30
+    schedule_min_interval_minutes: int = 15
+    schedule_max_per_user: int = 10
     # Governed research (PLUGINS=harnis.research): sites agents may read ("example.com,*.example.org")
     # and an optional SearxNG-compatible JSON search endpoint. Both empty = no research tools.
     research_allow_domains: str = ""

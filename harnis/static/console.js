@@ -373,6 +373,7 @@
     { id: "approvals", label: "Approvals", section: "Work", allowed: () => has("reviewer"), render: viewApprovals, badge: true },
     { id: "activity", label: "Usage & analytics", section: "Work", allowed: () => has("user") || has("reviewer"), render: viewActivity },
     { id: "agents", label: "Agents & prompts", section: "Work", allowed: () => has("user") || has("reviewer"), render: viewAgents },
+    { id: "schedules", label: "Schedules", section: "Work", allowed: () => has("user"), render: viewSchedules },
     { id: "keys", label: "API keys", section: "Tenant admin", allowed: () => has("admin"), render: viewKeys },
     { id: "audit", label: "Audit log", section: "Tenant admin", allowed: () => has("admin"), render: viewAudit },
     { id: "data", label: "User data", section: "Tenant admin", allowed: () => has("admin"), render: viewUserData },
@@ -1042,6 +1043,98 @@
         box.replaceChildren(ta, h("div", { class: "row" }, save, info));
       } catch (e) { box.replaceChildren(errorBox(e)); }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Scheduled tasks
+  // ---------------------------------------------------------------------------
+  const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  function describeSchedule(sc, tz) {
+    if (sc.kind === "every") return sc.minutes % 60 === 0 ? `every ${plural(sc.minutes / 60, "hour")}` : `every ${plural(sc.minutes, "minute")}`;
+    if (sc.kind === "daily") return `daily at ${sc.at} (${tz})`;
+    return `${sc.days.map((d) => DAY_NAMES[d]).join(", ")} at ${sc.at} (${tz})`;
+  }
+
+  async function viewSchedules(root) {
+    root.append(pageHead("Schedules", "Send a message to an agent on a schedule. Each run is a normal conversation started as you, so changes and commands still wait in Approvals; a run that reaches an approval stops there."));
+    const notice = h("div", {});
+    const name = h("input", { type: "text", id: "schName", maxlength: "120", placeholder: "e.g. Morning dependency check" });
+    const message = h("textarea", { id: "schMessage", rows: "3", maxlength: "50000", placeholder: "What should the agent do each time?" });
+    const agent = h("select", { id: "schAgent" }, h("option", { value: "", text: "Let Harnis choose" }));
+    const kind = h("select", { id: "schKind" },
+      h("option", { value: "daily", text: "Every day" }), h("option", { value: "weekly", text: "On chosen days" }),
+      h("option", { value: "every", text: "Every N minutes" }));
+    const at = h("input", { type: "time", id: "schAt", value: "09:00" });
+    const minutes = h("input", { type: "number", id: "schMinutes", min: "1", value: "60" });
+    const dayBoxes = DAY_NAMES.map((d, i) => h("input", { type: "checkbox", value: String(i), checked: i < 5 }));
+    const days = h("div", { class: "row" }, ...dayBoxes.map((b, i) => h("label", { class: "check" }, b, DAY_NAMES[i])));
+    const tz = h("input", { type: "text", id: "schTz", value: (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC") });
+    const timeField = h("label", { class: "field" }, "Time", at);
+    const minField = h("label", { class: "field" }, "Minutes between runs", minutes);
+    const listBox = h("div", { class: "card" });
+    const sync = () => {
+      timeField.classList.toggle("hidden", kind.value === "every");
+      minField.classList.toggle("hidden", kind.value !== "every");
+      days.classList.toggle("hidden", kind.value !== "weekly");
+    };
+    kind.addEventListener("change", sync);
+    const form = h("form", { class: "card pad stack", id: "schForm", onsubmit: async (ev) => {
+      ev.preventDefault();
+      const schedule = kind.value === "every" ? { kind: "every", minutes: Number(minutes.value) }
+        : kind.value === "daily" ? { kind: "daily", at: at.value }
+        : { kind: "weekly", days: dayBoxes.filter((b) => b.checked).map((b) => Number(b.value)), at: at.value };
+      if (!name.value.trim() || !message.value.trim()) { toast("Give the task a name and a message.", "error"); return; }
+      try {
+        await api("POST", "/v1/schedules", { name: name.value.trim(), message: message.value.trim(),
+          agent: agent.value || null, schedule, timezone: tz.value.trim() || "UTC" });
+        name.value = ""; message.value = "";
+        toast("Scheduled."); load();
+      } catch (e) { toast(e.message, "error"); }
+    } },
+      h("h2", { text: "New scheduled task" }),
+      h("label", { class: "field" }, "Name", name),
+      h("label", { class: "field" }, "Message", message),
+      h("div", { class: "row" }, h("label", { class: "field" }, "Agent", agent),
+        h("label", { class: "field" }, "How often", kind), timeField, minField,
+        h("label", { class: "field" }, "Time zone", tz)),
+      days,
+      h("div", { class: "row" }, h("button", { class: "btn", type: "submit", id: "schCreate" }, "Schedule it")));
+    listBox.style.setProperty("margin-top", "16px");
+    root.append(notice, form, listBox);
+    sync();
+    api("GET", "/v1/agents").then((as) => as.forEach((a) => agent.append(h("option", { value: a.name, text: a.name })))).catch(() => {});
+
+    async function act(fn, ok) {
+      try { await fn(); if (ok) toast(ok); } catch (e) { toast(e.message, "error"); }
+      load();
+    }
+    async function load() {
+      try {
+        const r = await api("GET", "/v1/schedules");
+        notice.replaceChildren(r.scheduler_enabled ? "" : h("div", { class: "notice warn", id: "schOff",
+          text: "The scheduler is turned off on this server, so tasks will not run on their own (SCHEDULER_ENABLED=true turns it on). You can still use Run now." }));
+        listBox.replaceChildren(table([
+          { label: "Name", key: "name" },
+          { label: "When", render: (t) => describeSchedule(t.schedule, t.timezone) },
+          { label: "Next run", render: (t) => t.enabled && t.next_run_at ? fmtTime(t.next_run_at) : "paused" },
+          { label: "Last run", render: (t) => t.last_run_at ? h("span", {}, statusPill(t.last_status || "started"), " ", ago(t.last_run_at),
+            t.last_session_id ? h("span", {}, " · ", h("a", { href: "#/chat/" + encodeURIComponent(t.last_session_id), text: "open" })) : "") : "never" },
+          { label: "", render: (t) => h("span", { class: "row" },
+            h("button", { class: "btn sm secondary", "data-run": t.task_id, onclick: () => act(() => api("POST", `/v1/schedules/${t.task_id}/run`), "Started.") }, "Run now"),
+            h("button", { class: "btn sm secondary", onclick: () => act(() => api("PATCH", `/v1/schedules/${t.task_id}`, { enabled: !t.enabled })) }, t.enabled ? "Pause" : "Resume"),
+            deleteButton(t)) },
+        ], r.tasks, "Nothing scheduled yet."));
+      } catch (e) { listBox.replaceChildren(errorBox(e)); }
+    }
+    function deleteButton(t) {
+      const b = h("button", { class: "btn sm secondary", "data-delete": t.task_id }, "Delete");
+      b.addEventListener("click", () => {
+        if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Confirm delete"; b.className = "btn sm danger"; return; }
+        act(() => api("DELETE", "/v1/schedules/" + t.task_id), "Deleted.");
+      });
+      return b;
+    }
+    load();
   }
 
   // ---------------------------------------------------------------------------

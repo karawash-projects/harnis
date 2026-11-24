@@ -187,6 +187,64 @@ class PgStore:
             row = conn.execute("SELECT * FROM harnis_turn_queue_stats()").fetchone()
         return {"queued": int(row["out_queued"]), "oldest_seconds": float(row["out_oldest_seconds"])}
 
+    # -- scheduled tasks ----------------------------------------------------------------
+    def create_schedule(self, tenant_id: str, user_id: str, name: str, agent: str | None, message: str,
+                        schedule: dict[str, Any], timezone: str, enabled: bool, next_run_at: Any,
+                        max_per_user: int) -> dict[str, Any]:
+        with self._tx(tenant_id) as conn:
+            n = conn.execute("SELECT count(*) AS n FROM scheduled_tasks WHERE user_id = %s", (user_id,)).fetchone()["n"]
+            if n >= max_per_user:
+                raise ValueError(f"at most {max_per_user} scheduled tasks per person")
+            return conn.execute(
+                "INSERT INTO scheduled_tasks (tenant_id, user_id, name, agent, message, schedule, timezone,"
+                " enabled, next_run_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
+                (tenant_id, user_id, name, agent, message, pg.Jsonb(schedule), timezone, enabled,
+                 next_run_at if enabled else None)).fetchone()
+
+    def list_schedules(self, tenant_id: str, user_id: str | None) -> list[dict[str, Any]]:
+        with self._tx(tenant_id) as conn:
+            if user_id is None:
+                return conn.execute("SELECT * FROM scheduled_tasks ORDER BY created_at").fetchall()
+            return conn.execute("SELECT * FROM scheduled_tasks WHERE user_id = %s ORDER BY created_at",
+                                (user_id,)).fetchall()
+
+    def get_schedule(self, tenant_id: str, task_id: str) -> dict[str, Any] | None:
+        with self._tx(tenant_id) as conn:
+            return conn.execute("SELECT * FROM scheduled_tasks WHERE task_id = %s", (task_id,)).fetchone()
+
+    def update_schedule(self, tenant_id: str, task_id: str, **fields: Any) -> dict[str, Any] | None:
+        allowed = {"name", "agent", "message", "schedule", "timezone", "enabled", "next_run_at", "last_session_id"}
+        sets, args = [], []
+        for k, v in fields.items():
+            if k not in allowed:
+                raise ValueError(k)
+            sets.append(f"{k} = %s")
+            args.append(pg.Jsonb(v) if k == "schedule" else v)
+        if not sets:
+            return self.get_schedule(tenant_id, task_id)
+        with self._tx(tenant_id) as conn:
+            return conn.execute(f"UPDATE scheduled_tasks SET {', '.join(sets)} WHERE task_id = %s RETURNING *",
+                                (*args, task_id)).fetchone()
+
+    def delete_schedule(self, tenant_id: str, task_id: str) -> bool:
+        with self._tx(tenant_id) as conn:
+            return conn.execute("DELETE FROM scheduled_tasks WHERE task_id = %s RETURNING 1", (task_id,)).fetchone() is not None
+
+    def claim_due_schedules(self, limit: int, lease_seconds: int) -> list[dict[str, Any]]:
+        """Lease due tasks, across tenants (a short lease: a scheduler that dies lets another take over)."""
+        with self._platform() as conn:
+            rows = conn.execute("SELECT * FROM harnis_claim_due_schedules(%s, %s)", (limit, lease_seconds)).fetchall()
+        return [{"task_id": str(r["out_task_id"]), "tenant_id": r["out_tenant_id"], "user_id": r["out_user_id"],
+                 "name": r["out_name"], "agent": r["out_agent"], "message": r["out_message"],
+                 "schedule": r["out_schedule"], "timezone": r["out_timezone"]} for r in rows]
+
+    def finish_schedule(self, tenant_id: str, task_id: str, next_run_at: Any, status: str,
+                        session_id: str | None) -> None:
+        with self._tx(tenant_id) as conn:
+            conn.execute("UPDATE scheduled_tasks SET claimed_until = NULL, next_run_at = %s, last_run_at = now(),"
+                         " last_status = %s, last_session_id = coalesce(%s, last_session_id)"
+                         " WHERE task_id = %s", (next_run_at, status, session_id, task_id))
+
     # -- ledger, metrics, audit ---------------------------------------------------
     def record_usage(self, tenant_id: str, session_id: str, provider: str, model: str,
                      input_tokens: int, output_tokens: int, cost: float) -> None:
@@ -489,11 +547,15 @@ class PgStore:
                                 " WHERE created_by = %s", (user_id,)).fetchall()
             prompts = conn.execute("SELECT prompt_key, version, created_at FROM prompt_registry"
                                    " WHERE created_by = %s", (user_id,)).fetchall()
+            tasks = conn.execute("SELECT task_id, name, agent, message, schedule, timezone, enabled, created_at"
+                                 " FROM scheduled_tasks WHERE user_id = %s", (user_id,)).fetchall()
         return {"tenant_id": tenant_id, "user_id": user_id, "sessions": sessions, "approvals": approvals,
+                "scheduled_tasks": tasks,
                 "audit_events": audit, "api_keys_created": keys, "prompt_versions_created": prompts}
 
     def erase_user(self, tenant_id: str, user_id: str, actor: str) -> dict[str, Any]:
         with self._tx(tenant_id) as conn:
+            conn.execute("DELETE FROM scheduled_tasks WHERE user_id = %s", (user_id,))
             return conn.execute("SELECT harnis_erase_user(%s, %s) AS r", (user_id, actor)).fetchone()["r"]
 
     def delete_tenant(self, tenant_id: str, actor: str) -> dict[str, Any] | None:

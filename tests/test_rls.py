@@ -69,8 +69,8 @@ def test_rls_is_forced_on_every_tenant_table(pg):
         rows = c.execute("SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class"
                          " WHERE relname = ANY(%s)",
                          (["sessions", "approvals", "prompt_registry", "audit_log", "run_metrics",
-                           "token_ledger", "tenants", "api_keys", "turn_jobs"],)).fetchall()
-    assert len(rows) == 9 and all(r[1] and r[2] for r in rows)
+                           "token_ledger", "tenants", "api_keys", "turn_jobs", "scheduled_tasks"],)).fetchall()
+    assert len(rows) == 10 and all(r[1] and r[2] for r in rows)
 
 
 def test_app_cannot_read_matview_or_partitions_directly(pg):
