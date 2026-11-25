@@ -137,6 +137,10 @@ def run(settings: Settings | None = None, stop: threading.Event | None = None, a
     if settings.worker_metrics_port:
         from prometheus_client import start_http_server
         start_http_server(settings.worker_metrics_port)
+    if settings.scheduler_enabled:
+        from .scheduler import Scheduler
+        threading.Thread(target=Scheduler(app.state.store, app.state.orch, app.state.locks, settings,
+                                          app.state.registry).loop, args=(stop,), name="scheduler", daemon=True).start()
     threads = [threading.Thread(target=_loop, args=(app.state, settings, stop), name=f"worker-{i}", daemon=True)
                for i in range(settings.worker_concurrency)]
     for t in threads:

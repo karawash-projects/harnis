@@ -11,7 +11,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,7 @@ from .guardrails import InputGuard, OutputGuard
 from .infra import EventBus, RateLimiter, SessionLock
 from .llm.router import build_router
 from .plugins import Registry, build_registry
+from .scheduler import Scheduler, next_run, parse_spec, zone
 from .orchestrator import ConflictError, Deps, Limits, Orchestrator, SessionRecord, workspace_for
 from .sandbox import DockerSandbox
 from .store import ApprovalError, PgStore
@@ -52,6 +53,23 @@ class CreateSession(BaseModel):
 
 class TurnIn(BaseModel):
     message: str = Field(..., min_length=1, max_length=50_000)
+
+
+class ScheduleIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    message: str = Field(..., min_length=1, max_length=50_000)
+    agent: str | None = None
+    schedule: dict[str, Any]
+    timezone: str = "UTC"
+    enabled: bool = True
+
+class SchedulePatch(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    message: str | None = Field(None, min_length=1, max_length=50_000)
+    agent: str | None = None
+    schedule: dict[str, Any] | None = None
+    timezone: str | None = None
+    enabled: bool | None = None
 
 
 class DecisionIn(BaseModel):
@@ -220,10 +238,16 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        sched_stop = None
+        if settings.scheduler_enabled:
+            _, sched_stop = scheduler.start()
         yield
+        if sched_stop is not None:
+            sched_stop.set()
         from .db import close_pool
         close_pool()
 
+    scheduler = Scheduler(store, orch, locks, settings, registry)
     app = FastAPI(title="Harnis", version=__version__, lifespan=lifespan)
     setup_tracing(settings, alert=alerts, app=app)
     app.state.orch, app.state.store, app.state.alerts, app.state.registry = orch, store, alerts, registry
@@ -428,6 +452,18 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
     def get_session(session_id: str, p: Principal = Depends(current_principal)) -> dict[str, Any]:
         return view(load_owned(p, session_id))
 
+    @app.get("/v1/sessions/{session_id}/trace")
+    def get_trace(session_id: str, turn: int | None = None,
+                  p: Principal = Depends(current_principal)) -> dict[str, Any]:
+        """Timeline of the recent turns: model calls, tool calls and approval waits, with timing.
+        No contents or command text. The owner and reviewers can read it."""
+        rec = load_owned(p, session_id)
+        entries = list(rec.state.get("trace", []))
+        turns = sorted({e["turn"] for e in entries})
+        pick = turn if turn is not None else (turns[-1] if turns else None)
+        return {"session_id": rec.session_id, "turns": turns, "turn": pick,
+                "entries": [e for e in entries if e["turn"] == pick]}
+
     @app.get("/v1/sessions/{session_id}/files")
     def get_files(session_id: str, p: Principal = Depends(current_principal)) -> dict[str, str]:
         rec = load_owned(p, session_id)
@@ -502,6 +538,91 @@ def create_app(settings: Settings | None = None, *, store=None, redis=None, rout
             if rec.status == "running":
                 response.status_code = status.HTTP_202_ACCEPTED
         return await asyncio.to_thread(view, rec)
+
+    # -- scheduled tasks ---------------------------------------------------------
+    def _spec_or_400(raw: dict[str, Any], tz: str) -> Any:
+        try:
+            zone(tz)
+            return parse_spec(raw, settings.schedule_min_interval_minutes)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    def _task_view(t: dict[str, Any]) -> dict[str, Any]:
+        keys = ("name", "user_id", "agent", "message", "schedule", "timezone", "enabled", "next_run_at",
+                "last_run_at", "last_status", "last_session_id", "created_at")
+        return {"task_id": str(t["task_id"]), **{k: t.get(k) for k in keys}}
+
+    def _own_task(p: Principal, task_id: str) -> dict[str, Any]:
+        t = store.get_schedule(p.tenant_id, task_id)
+        if t is None or (t["user_id"] != p.user_id and not p.has("admin")):
+            raise HTTPException(404, "scheduled task not found")
+        return t
+
+    @app.get("/v1/schedules")
+    def list_schedules(all_: bool = Query(False, alias="all"),
+                       p: Principal = Depends(require_role("user"))) -> dict[str, Any]:
+        rows = store.list_schedules(p.tenant_id, None if (all_ and p.has("admin")) else p.user_id)
+        return {"scheduler_enabled": settings.scheduler_enabled,
+                "min_interval_minutes": settings.schedule_min_interval_minutes,
+                "tasks": [_task_view(r) for r in rows]}
+
+    @app.post("/v1/schedules", status_code=201)
+    def create_schedule(body: ScheduleIn, p: Principal = Depends(require_role("user"))) -> dict[str, Any]:
+        if not store.tenant_active(p.tenant_id):
+            raise HTTPException(403, "tenant is disabled")
+        if body.agent is not None and body.agent not in registry.agents:
+            raise HTTPException(400, f"unknown agent {body.agent!r}")
+        spec = _spec_or_400(body.schedule, body.timezone)
+        nxt = next_run(spec, body.timezone, datetime.now(timezone.utc))
+        try:
+            t = store.create_schedule(p.tenant_id, p.user_id, body.name, body.agent, body.message,
+                                      spec.model_dump(), body.timezone, body.enabled, nxt,
+                                      settings.schedule_max_per_user)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        store.audit(p.tenant_id, None, p.user_id, "schedule_created", {"task_id": str(t["task_id"]), "name": body.name})
+        return _task_view(t)
+
+    @app.patch("/v1/schedules/{task_id}")
+    def update_schedule(task_id: str, body: SchedulePatch, p: Principal = Depends(require_role("user"))) -> dict[str, Any]:
+        cur = _own_task(p, task_id)
+        if cur["user_id"] != p.user_id:
+            raise HTTPException(403, "only the owner can change a scheduled task (admins can delete or disable it)")
+        fields = body.model_dump(exclude_unset=True)
+        if "agent" in fields and fields["agent"] is not None and fields["agent"] not in registry.agents:
+            raise HTTPException(400, f"unknown agent {fields['agent']!r}")
+        tz = fields.get("timezone", cur["timezone"])
+        sched = fields.get("schedule", cur["schedule"])
+        spec = _spec_or_400(sched, tz)
+        if {"schedule", "timezone", "enabled"} & fields.keys():
+            enabled = fields.get("enabled", cur["enabled"])
+            fields["next_run_at"] = next_run(spec, tz, datetime.now(timezone.utc)) if enabled else None
+        if "schedule" in fields:
+            fields["schedule"] = spec.model_dump()
+        t = store.update_schedule(p.tenant_id, task_id, **fields)
+        store.audit(p.tenant_id, None, p.user_id, "schedule_updated", {"task_id": task_id, "fields": sorted(body.model_dump(exclude_unset=True))})
+        return _task_view(t)
+
+    @app.delete("/v1/schedules/{task_id}", status_code=204)
+    def delete_schedule(task_id: str, p: Principal = Depends(require_role("user"))) -> Response:
+        _own_task(p, task_id)
+        store.delete_schedule(p.tenant_id, task_id)
+        store.audit(p.tenant_id, None, p.user_id, "schedule_deleted", {"task_id": task_id})
+        return Response(status_code=204)
+
+    @app.post("/v1/schedules/{task_id}/run", status_code=202)
+    async def run_schedule_now(task_id: str, p: Principal = Depends(require_role("user"))) -> dict[str, Any]:
+        t = _own_task(p, task_id)
+        if t["user_id"] != p.user_id:
+            raise HTTPException(403, "only the owner can run a scheduled task")
+        status_, sid = await asyncio.to_thread(scheduler.run_task, t)
+        if status_.startswith("skipped"):
+            raise HTTPException(409, "the previous run is still working or waiting for an approval"
+                                if status_ == "skipped_waiting" else "tenant is disabled")
+        if status_ == "failed":
+            raise HTTPException(500, "the task could not be started; see the server log")
+        await asyncio.to_thread(store.finish_schedule, p.tenant_id, task_id, t["next_run_at"], "started", sid)
+        return {"session_id": sid}
 
     # -- approvals --------------------------------------------------------------
     @app.get("/v1/approvals")

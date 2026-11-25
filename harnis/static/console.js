@@ -373,6 +373,7 @@
     { id: "approvals", label: "Approvals", section: "Work", allowed: () => has("reviewer"), render: viewApprovals, badge: true },
     { id: "activity", label: "Usage & analytics", section: "Work", allowed: () => has("user") || has("reviewer"), render: viewActivity },
     { id: "agents", label: "Agents & prompts", section: "Work", allowed: () => has("user") || has("reviewer"), render: viewAgents },
+    { id: "schedules", label: "Schedules", section: "Work", allowed: () => has("user"), render: viewSchedules },
     { id: "keys", label: "API keys", section: "Tenant admin", allowed: () => has("admin"), render: viewKeys },
     { id: "audit", label: "Audit log", section: "Tenant admin", allowed: () => has("admin"), render: viewAudit },
     { id: "data", label: "User data", section: "Tenant admin", allowed: () => has("admin"), render: viewUserData },
@@ -546,6 +547,7 @@
     const messages = h("div", { class: "messages", id: "messages" });
     const head = h("div", { class: "conv-head" });
     const filesBox = h("div", { class: "files hidden" });
+    const traceBox = h("div", { class: "trace hidden", id: "traceBox" });
     const input = h("textarea", { id: "messageInput", rows: "1", placeholder: "Message the agents. Try: create calc.py with an add function" });
     const send = h("button", { class: "btn", id: "sendBtn" }, "Send");
     let busy = false;
@@ -555,7 +557,7 @@
         h("div", { class: "conv-head" }, h("h3", { text: "Conversations" }), h("span", { class: "spacer" }),
           h("button", { class: "btn sm", id: "newSession", onclick: () => newSession() }, "New")),
         list),
-      h("div", { class: "card conv" }, head, messages, filesBox,
+      h("div", { class: "card conv" }, head, messages, filesBox, traceBox,
         h("div", { class: "composer" }, input, send))));
 
     async function loadList() {
@@ -576,6 +578,7 @@
       history.replaceState(null, "", "#/chat/" + encodeURIComponent(id));
       for (const b of list.querySelectorAll(".item")) b.classList.toggle("active", b.dataset.session === id);
       filesBox.classList.add("hidden");
+      traceBox.classList.add("hidden");
       if (load) refresh();
     }
 
@@ -596,6 +599,7 @@
         statusPill(v.status), v.agent ? h("span", { class: "pill", text: "agent: " + v.agent }) : null,
         h("span", { class: "spacer" }),
         t.steps != null ? h("span", { class: "muted small", text: `${plural(t.steps, "step")} · ${plural(t.tool_calls || 0, "tool call")} · ${money(t.cost_usd)}${t.cache_hit ? " · cached" : ""}` }) : null,
+        h("button", { class: "btn ghost sm", id: "traceBtn", onclick: toggleTrace }, "Trace"),
         h("button", { class: "btn ghost sm", id: "filesBtn", onclick: toggleFiles }, "Files"));
       const nodes = [];
       for (const m of v.messages) {
@@ -648,10 +652,44 @@
         renderView(await api("GET", "/v1/sessions/" + encodeURIComponent(current)));
         store.set("session", current);
         if (!filesBox.classList.contains("hidden")) loadFiles();
+        if (!traceBox.classList.contains("hidden")) loadTrace();
       } catch (e) {
         if (e.status === 404) { store.del("session"); current = ""; refresh(); return; }
         messages.replaceChildren(errorBox(e));
       }
+    }
+
+    // Timeline of one turn: each step is a bar placed by start time and sized by duration.
+    async function loadTrace(turn) {
+      try {
+        const q = turn != null ? "?turn=" + turn : "";
+        const tr = await api("GET", `/v1/sessions/${encodeURIComponent(current)}/trace${q}`);
+        const es = tr.entries || [];
+        const total = Math.max(0.001, ...es.map((e) => e.t + e.d));
+        const label = (e) => e.kind === "model" ? `model ${e.model || ""} · ${e.in_tokens || 0}→${e.out_tokens || 0} tokens · ${money(e.cost)}`
+          : e.kind === "approval" ? `approval wait · ${e.ok ? "approved" : "denied"} · ${e.tool}`
+          : `${e.ok ? "✓" : "✗"} ${e.tool}${e.target ? " " + e.target : ""}`;
+        const rows = es.map((e) => {
+          const bar = h("span", { class: "bar " + e.kind + (e.ok === false ? " bad" : "") });
+          bar.style.setProperty("left", (100 * e.t / total).toFixed(2) + "%");
+          bar.style.setProperty("width", Math.max(0.8, 100 * e.d / total).toFixed(2) + "%");
+          return h("div", { class: "trace-row" },
+            h("span", { class: "trace-label mono small", text: label(e) }),
+            h("span", { class: "track" }, bar),
+            h("span", { class: "muted small", text: e.d.toFixed(2) + " s" }));
+        });
+        const picker = (tr.turns || []).length > 1
+          ? h("span", {}, ...tr.turns.map((n) => h("button", { class: "btn ghost sm" + (n === tr.turn ? " active" : ""),
+              onclick: () => loadTrace(n) }, "turn " + n))) : null;
+        traceBox.replaceChildren(h("div", { class: "row" }, h("h3", { text: "Trace" }),
+          h("span", { class: "muted small", text: es.length ? `${plural(es.length, "step")} · ${total.toFixed(1)} s` : "nothing recorded yet" }), picker),
+          ...rows);
+      } catch (e) { traceBox.replaceChildren(errorBox(e)); }
+    }
+    function toggleTrace() {
+      if (!current) return;
+      traceBox.classList.toggle("hidden");
+      if (!traceBox.classList.contains("hidden")) loadTrace();
     }
 
     async function loadFiles() {
@@ -1005,6 +1043,98 @@
         box.replaceChildren(ta, h("div", { class: "row" }, save, info));
       } catch (e) { box.replaceChildren(errorBox(e)); }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Scheduled tasks
+  // ---------------------------------------------------------------------------
+  const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  function describeSchedule(sc, tz) {
+    if (sc.kind === "every") return sc.minutes % 60 === 0 ? `every ${plural(sc.minutes / 60, "hour")}` : `every ${plural(sc.minutes, "minute")}`;
+    if (sc.kind === "daily") return `daily at ${sc.at} (${tz})`;
+    return `${sc.days.map((d) => DAY_NAMES[d]).join(", ")} at ${sc.at} (${tz})`;
+  }
+
+  async function viewSchedules(root) {
+    root.append(pageHead("Schedules", "Send a message to an agent on a schedule. Each run is a normal conversation started as you, so changes and commands still wait in Approvals; a run that reaches an approval stops there."));
+    const notice = h("div", {});
+    const name = h("input", { type: "text", id: "schName", maxlength: "120", placeholder: "e.g. Morning dependency check" });
+    const message = h("textarea", { id: "schMessage", rows: "3", maxlength: "50000", placeholder: "What should the agent do each time?" });
+    const agent = h("select", { id: "schAgent" }, h("option", { value: "", text: "Let Harnis choose" }));
+    const kind = h("select", { id: "schKind" },
+      h("option", { value: "daily", text: "Every day" }), h("option", { value: "weekly", text: "On chosen days" }),
+      h("option", { value: "every", text: "Every N minutes" }));
+    const at = h("input", { type: "time", id: "schAt", value: "09:00" });
+    const minutes = h("input", { type: "number", id: "schMinutes", min: "1", value: "60" });
+    const dayBoxes = DAY_NAMES.map((d, i) => h("input", { type: "checkbox", value: String(i), checked: i < 5 }));
+    const days = h("div", { class: "row" }, ...dayBoxes.map((b, i) => h("label", { class: "check" }, b, DAY_NAMES[i])));
+    const tz = h("input", { type: "text", id: "schTz", value: (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC") });
+    const timeField = h("label", { class: "field" }, "Time", at);
+    const minField = h("label", { class: "field" }, "Minutes between runs", minutes);
+    const listBox = h("div", { class: "card" });
+    const sync = () => {
+      timeField.classList.toggle("hidden", kind.value === "every");
+      minField.classList.toggle("hidden", kind.value !== "every");
+      days.classList.toggle("hidden", kind.value !== "weekly");
+    };
+    kind.addEventListener("change", sync);
+    const form = h("form", { class: "card pad stack", id: "schForm", onsubmit: async (ev) => {
+      ev.preventDefault();
+      const schedule = kind.value === "every" ? { kind: "every", minutes: Number(minutes.value) }
+        : kind.value === "daily" ? { kind: "daily", at: at.value }
+        : { kind: "weekly", days: dayBoxes.filter((b) => b.checked).map((b) => Number(b.value)), at: at.value };
+      if (!name.value.trim() || !message.value.trim()) { toast("Give the task a name and a message.", "error"); return; }
+      try {
+        await api("POST", "/v1/schedules", { name: name.value.trim(), message: message.value.trim(),
+          agent: agent.value || null, schedule, timezone: tz.value.trim() || "UTC" });
+        name.value = ""; message.value = "";
+        toast("Scheduled."); load();
+      } catch (e) { toast(e.message, "error"); }
+    } },
+      h("h2", { text: "New scheduled task" }),
+      h("label", { class: "field" }, "Name", name),
+      h("label", { class: "field" }, "Message", message),
+      h("div", { class: "row" }, h("label", { class: "field" }, "Agent", agent),
+        h("label", { class: "field" }, "How often", kind), timeField, minField,
+        h("label", { class: "field" }, "Time zone", tz)),
+      days,
+      h("div", { class: "row" }, h("button", { class: "btn", type: "submit", id: "schCreate" }, "Schedule it")));
+    listBox.style.setProperty("margin-top", "16px");
+    root.append(notice, form, listBox);
+    sync();
+    api("GET", "/v1/agents").then((as) => as.forEach((a) => agent.append(h("option", { value: a.name, text: a.name })))).catch(() => {});
+
+    async function act(fn, ok) {
+      try { await fn(); if (ok) toast(ok); } catch (e) { toast(e.message, "error"); }
+      load();
+    }
+    async function load() {
+      try {
+        const r = await api("GET", "/v1/schedules");
+        notice.replaceChildren(r.scheduler_enabled ? "" : h("div", { class: "notice warn", id: "schOff",
+          text: "The scheduler is turned off on this server, so tasks will not run on their own (SCHEDULER_ENABLED=true turns it on). You can still use Run now." }));
+        listBox.replaceChildren(table([
+          { label: "Name", key: "name" },
+          { label: "When", render: (t) => describeSchedule(t.schedule, t.timezone) },
+          { label: "Next run", render: (t) => t.enabled && t.next_run_at ? fmtTime(t.next_run_at) : "paused" },
+          { label: "Last run", render: (t) => t.last_run_at ? h("span", {}, statusPill(t.last_status || "started"), " ", ago(t.last_run_at),
+            t.last_session_id ? h("span", {}, " · ", h("a", { href: "#/chat/" + encodeURIComponent(t.last_session_id), text: "open" })) : "") : "never" },
+          { label: "", render: (t) => h("span", { class: "row" },
+            h("button", { class: "btn sm secondary", "data-run": t.task_id, onclick: () => act(() => api("POST", `/v1/schedules/${t.task_id}/run`), "Started.") }, "Run now"),
+            h("button", { class: "btn sm secondary", onclick: () => act(() => api("PATCH", `/v1/schedules/${t.task_id}`, { enabled: !t.enabled })) }, t.enabled ? "Pause" : "Resume"),
+            deleteButton(t)) },
+        ], r.tasks, "Nothing scheduled yet."));
+      } catch (e) { listBox.replaceChildren(errorBox(e)); }
+    }
+    function deleteButton(t) {
+      const b = h("button", { class: "btn sm secondary", "data-delete": t.task_id }, "Delete");
+      b.addEventListener("click", () => {
+        if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Confirm delete"; b.className = "btn sm danger"; return; }
+        act(() => api("DELETE", "/v1/schedules/" + t.task_id), "Deleted.");
+      });
+      return b;
+    }
+    load();
   }
 
   // ---------------------------------------------------------------------------

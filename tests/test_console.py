@@ -614,3 +614,39 @@ def test_handover_summary_is_shown_when_a_conversation_was_escalated(page, tmp_p
         expect(page.locator("#handover")).to_contain_text("unclear which database")
         expect(page.locator("#handover")).to_contain_text("db.py")
         expect(page.locator("#handover")).to_contain_text("Suggested next steps")
+
+
+def test_trace_panel_shows_the_steps_of_a_turn(page, tmp_path, app_pool, redis_client):
+    expect = sync_api.expect
+    with serve(harnis_app(tmp_path, app_pool, redis_client)) as url:
+        page.goto(url + "/")
+        page.click("#devToken")
+        page.click("#newSession")
+        page.fill("#messageInput", "hello")
+        page.click("#sendBtn")
+        expect(page.locator(".msg.assistant").first).to_be_visible()
+        page.click("#traceBtn")
+        expect(page.locator("#traceBox")).to_contain_text("Trace")
+        expect(page.locator("#traceBox .trace-row").first).to_contain_text("model")
+        assert page.locator("#traceBox .bar").first.evaluate("e => e.style.width") != ""
+
+
+def test_schedules_page_creates_pauses_runs_and_deletes_a_task(page, tmp_path, app_pool, redis_client):
+    expect = sync_api.expect
+    with serve(harnis_app(tmp_path, app_pool, redis_client)) as url:
+        page.goto(url + "/#/schedules")
+        page.click("#devToken")
+        expect(page.locator("#schOff")).to_contain_text("scheduler is turned off")
+        page.fill("#schName", "Morning check")
+        page.fill("#schMessage", "create calc.py")
+        page.click("#schCreate")
+        row = page.locator("tbody tr", has_text="Morning check")
+        expect(row).to_contain_text("daily at 09:00")
+        row.get_by_role("button", name="Pause").click()
+        expect(row).to_contain_text("paused")
+        row.get_by_role("button", name="Resume").click()
+        row.get_by_role("button", name="Run now").click()
+        expect(row).to_contain_text("started", ignore_case=True)
+        row.get_by_role("button", name="Delete").click()
+        row.get_by_role("button", name="Confirm delete").click()
+        expect(page.locator("tbody tr", has_text="Morning check")).to_have_count(0)
